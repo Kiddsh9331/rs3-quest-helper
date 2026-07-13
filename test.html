@@ -47,6 +47,11 @@
 		// Libraries loaded and expose the expected globals?
 		check("A1lib global", typeof A1lib !== "undefined" && !!A1lib.captureHoldFullRs);
 		check("digit font global", typeof Alt1Fonts !== "undefined" && !!Alt1Fonts.pixel_8px_digits);
+		check("digit font is a FontDefinition", (function () {
+			var f = Alt1Fonts.pixel_8px_digits;
+			if (f && f.default) f = f.default;
+			return !!(f && f.chars && typeof f.basey === "number" && typeof f.width === "number");
+		})());
 		check("OCR global", typeof OCR !== "undefined" && !!OCR.readLine);
 		check("Dialog global", typeof Dialog !== "undefined" && !!Dialog.default);
 		check("Chatbox global", typeof Chatbox !== "undefined" && !!Chatbox.default);

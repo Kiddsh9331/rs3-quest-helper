@@ -664,10 +664,10 @@
 	// Render the overlay as a proper card on a canvas: dark rounded panel
 	// with wrapped step text, progress, chat options and a next-step hint.
 	function renderOverlayCard(step, doneCount, total) {
-		var W = 440, PAD = 12, LH = 20;
+		var W = 440, PAD = 12, LH = 20, MAXH = 400;
 		var canvas = document.createElement("canvas");
 		canvas.width = W;
-		canvas.height = 220;
+		canvas.height = MAXH;
 		var ctx = canvas.getContext("2d", { willReadFrequently: true });
 
 		function wrap(text, font, maxLines) {
@@ -691,17 +691,18 @@
 			return lines.slice(0, maxLines);
 		}
 
-		var stepLines = step ? wrap(step.text, "600 15px 'Segoe UI', sans-serif", 3) : ["Quest complete! 🎉"];
-		var chatLines = step && step.chat ? wrap("Chat: " + step.chat, "13px 'Segoe UI', sans-serif", 2) : [];
-		var next = null;
-		if (step) {
-			var idx = flatSteps.indexOf(step);
-			if (idx !== -1 && idx + 1 < flatSteps.length) {
-				next = wrap("Next: " + flatSteps[idx + 1].text, "12px 'Segoe UI', sans-serif", 1)[0];
-			}
+		// Autosize: the step text wraps fully instead of being cut off.
+		var stepLines = step ? wrap(step.text, "600 15px 'Segoe UI', sans-serif", 8) : ["Quest complete! 🎉"];
+		var chatLines = step && step.chat ? wrap("Chat: " + step.chat, "13px 'Segoe UI', sans-serif", 3) : [];
+		// Items needed for the current section, if the guide lists any.
+		var neededLines = [];
+		if (step && guide.sections && guide.sections[step.sectionIndex] && guide.sections[step.sectionIndex].needed.length) {
+			neededLines = wrap("Items: " + guide.sections[step.sectionIndex].needed.join("; "),
+				"12px 'Segoe UI', sans-serif", 2);
 		}
 
-		var H = PAD + 16 + 6 + stepLines.length * LH + chatLines.length * 18 + (next ? 17 : 0) + PAD;
+		var H = Math.min(MAXH,
+			PAD + 16 + 6 + stepLines.length * LH + chatLines.length * 18 + neededLines.length * 17 + PAD);
 
 		// Panel
 		ctx.clearRect(0, 0, W, 220);
@@ -738,13 +739,10 @@
 		ctx.fillStyle = "#7fb8f0";
 		chatLines.forEach(function (l) { y += 18; ctx.fillText(l, PAD, y); });
 
-		// Next step hint
-		if (next) {
-			ctx.font = "12px 'Segoe UI', sans-serif";
-			ctx.fillStyle = "rgba(200, 195, 175, 0.75)";
-			y += 17;
-			ctx.fillText(next, PAD, y);
-		}
+		// Items needed for this section
+		ctx.font = "12px 'Segoe UI', sans-serif";
+		ctx.fillStyle = "#9fd47f";
+		neededLines.forEach(function (l) { y += 17; ctx.fillText(l, PAD, y); });
 
 		return ctx.getImageData(0, 0, W, H);
 	}
@@ -1130,15 +1128,25 @@
 	}
 
 	// Stack sizes render in the small pixel font at the top-left of the
-	// slot; read them to verify required amounts of stackable items.
+	// slot; read them to verify required amounts of stackable items. The
+	// matched icon is trimmed, so the number can sit anywhere up-left of
+	// the hit — search each stack colour over the whole area and at every
+	// baseline (same approach as the alt1 buffs reader).
 	function readStackNumber(imgref, pos) {
 		try {
-			if (typeof Alt1Fonts === "undefined" || !Alt1Fonts.pixel_8px_digits) return null;
-			var buf = imgref.toData(Math.max(0, pos.x - 14), Math.max(0, pos.y - 18), 64, 26);
-			var res = OCR.findReadLine(buf, Alt1Fonts.pixel_8px_digits,
-				[[255, 255, 0], [255, 255, 255], [0, 255, 128]], 2, 2, 60, 22);
-			var digits = res && res.text ? res.text.replace(/[^0-9]/g, "") : "";
-			return digits ? parseInt(digits, 10) : null;
+			var font = typeof Alt1Fonts !== "undefined" ? Alt1Fonts.pixel_8px_digits : null;
+			if (font && font.default) font = font.default;
+			if (!font || !OCR.findChar) return null;
+			var buf = imgref.toData(Math.max(0, pos.x - 24), Math.max(0, pos.y - 26), 84, 44);
+			var cols = [[255, 255, 0], [255, 255, 255], [0, 255, 128], [255, 165, 0]];
+			for (var c = 0; c < cols.length; c++) {
+				var chr = OCR.findChar(buf, font, cols[c], 0, 6, buf.width - 10, buf.height - 12);
+				if (!chr) continue;
+				var r = OCR.readLine(buf, font, cols[c], chr.x, chr.y, true, true);
+				var digits = r && r.text ? r.text.replace(/[^0-9]/g, "") : "";
+				if (digits) return parseInt(digits, 10);
+			}
+			return null;
 		} catch (e) {
 			return null;
 		}
