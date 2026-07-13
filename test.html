@@ -113,33 +113,53 @@
 		r = m("1 TALK ABOUT a christmas reunion", opts);
 		check("case insensitive", r.length === 1 && r[0] === opts[0]);
 
-		// Conversation tracker (auto-tick heuristic).
-		var ct = window.__rs3qh.convoTrack;
-		var advanced;
-		// no dialog ever -> never advances
+		// Conversation tracker (evidence-based auto-tick).
+		var co = window.__rs3qh.convoObserve;
+		function ev(k, sub) { return { key: k, subIndex: sub === undefined ? null : sub }; }
+		var advanced, res;
+		// no dialog ever -> nothing happens
 		advanced = false;
-		for (var i = 0; i < 10; i++) { if (ct("s1", false)) advanced = true; }
-		check("convo: no dialog, no advance", !advanced);
-		// dialog appears 3 ticks, disappears -> advances on 3rd gone tick
-		ct("s2", true); ct("s2", true); ct("s2", true);
-		check("convo: gone 1", ct("s2", false) === false);
-		check("convo: gone 2", ct("s2", false) === false);
-		check("convo: gone 3 advances", ct("s2", false) === true);
-		check("convo: does not re-advance", ct("s2", false) === false);
-		// dialog blips for one tick only -> no advance (needs seen >= 2)
-		ct("s3", true);
+		for (var i = 0; i < 10; i++) { if (co("s1", false, null)) advanced = true; }
+		check("convo: no dialog, nothing", !advanced);
+
+		// THE EAVESDROP BUG: a conversation runs and ends but the step's
+		// options never matched -> must NOT tick (returns none marker).
+		co("s2", true, null); co("s2", true, null); co("s2", true, null);
+		co("s2", false, null); co("s2", false, null);
+		res = co("s2", false, null);
+		check("convo: unmatched conversation does not tick", !!res && res.none === true);
+
+		// Matched conversation ticks the step on the 3rd gone tick.
+		co("s3", true, null); co("s3", true, ev("s3")); co("s3", true, null);
+		co("s3", false, null); co("s3", false, null);
+		res = co("s3", false, null);
+		check("convo: matched conversation ticks step", !!res && !res.none && res.subIndex === null);
+		check("convo: does not re-tick", co("s3", false, null) === null);
+
+		// Sub-step evidence ticks the sub-step.
+		co("s4", true, ev("s4", 2)); co("s4", true, ev("s4", 2));
+		co("s4", false, null); co("s4", false, null);
+		res = co("s4", false, null);
+		check("convo: sub-step evidence", !!res && res.subIndex === 2);
+
+		// Evidence from a previous step never leaks into the next.
+		co("s5", true, ev("s5")); co("s5", true, ev("s5"));
+		co("s6", true, null); co("s6", true, null);
+		co("s6", false, null); co("s6", false, null);
+		res = co("s6", false, null);
+		check("convo: evidence does not leak across steps", !!res && res.none === true);
+
+		// Single-tick blip -> no end signal at all.
+		co("s7", true, ev("s7"));
 		advanced = false;
-		for (var i = 0; i < 5; i++) { if (ct("s3", false)) advanced = true; }
-		check("convo: single blip, no advance", !advanced);
-		// step change resets the tracker
-		ct("s4", true); ct("s4", true);
-		ct("s5", false); ct("s5", false);
-		check("convo: step change resets", ct("s5", false) === false);
-		// dialog reappearing resets the gone counter
-		ct("s6", true); ct("s6", true);
-		ct("s6", false); ct("s6", false);
-		ct("s6", true);
-		check("convo: reappear resets gone", ct("s6", false) === false && ct("s6", false) === false);
+		for (var i = 0; i < 5; i++) { if (co("s7", false, null)) advanced = true; }
+		check("convo: single blip, nothing", !advanced);
+
+		// Dialog reappearing resets the gone counter.
+		co("s8", true, ev("s8")); co("s8", true, null);
+		co("s8", false, null); co("s8", false, null);
+		co("s8", true, null);
+		check("convo: reappear resets gone", co("s8", false, null) === null && co("s8", false, null) === null);
 
 		// Quest-name normalisation (RuneMetrics <-> wiki title matching).
 		var nn = window.__rs3qh.normName;

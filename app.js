@@ -412,10 +412,10 @@
 				return IMG_OPEN + name + "|" + caption + IMG_CLOSE;
 			})
 			.replace(/\[\[Category:[^\]]*\]\]/gi, "")
-			.replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?\|([^\]]*)\]\]/g, function (_, page, label) {
+			.replace(/\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?\|([^\]\n]*)\]\]/g, function (_, page, label) {
 				return LINK_OPEN + page.trim() + "|" + label + LINK_CLOSE;
 			})
-			.replace(/\[\[([^\]#|]+)(?:#[^\]]*)?\]\]/g, function (_, page) {
+			.replace(/\[\[([^\]#|\n]+)(?:#[^\]\n]*)?\]\]/g, function (_, page) {
 				var p = page.trim();
 				return LINK_OPEN + p + "|" + p + LINK_CLOSE;
 			})
@@ -484,6 +484,9 @@
 			if (file) images.push({ file: file, caption: caption });
 			text = text.slice(0, start) + text.slice(pend + IMG_CLOSE.length);
 		}
+		// Scrub any leftover sentinel fragments (e.g. from wiki markup that
+		// splits a sentinel across lines) so they never reach the UI.
+		text = text.replace(/@@[CMIPL]\[|\][CMIPL]@@|@@NEEDED@@/g, "");
 		return {
 			text: text.replace(/\s+/g, " ").trim(),
 			chat: chat.join(" / ") || null,
@@ -852,22 +855,37 @@
 	var chatFound = false;
 	var autoAdvance = load(AUTO_KEY, false);
 
-	// Conversation tracker for auto-ticking dialogue steps: the step is
-	// considered finished when a dialogue was on screen for >=2 ticks and
-	// has then been gone for >=3 ticks (~2s), i.e. the conversation ended.
-	var convo = { key: null, seen: 0, gone: 0 };
-	// The step/sub-step whose chat options were last seen matched in a
-	// dialogue — that is what gets ticked when the conversation ends.
-	var assistLastTarget = null;
+	// Conversation tracker for auto-ticking dialogue steps. A conversation
+	// "ends" when a dialogue was on screen for >=2 ticks and then gone for
+	// >=3 ticks (~2s). Crucially, ending alone is NOT enough to tick: one
+	// of the step's expected chat options must have been seen matched
+	// during the conversation (the evidence) — otherwise unrelated
+	// dialogues (cutscenes, eavesdropping, other NPCs) would tick steps
+	// whose dialogue never happened.
+	var convo = { key: null, seen: 0, gone: 0, evidence: null };
 
-	function convoTrack(key, dialogVisible) {
-		if (convo.key !== key) { convo.key = key; convo.seen = 0; convo.gone = 0; }
-		if (dialogVisible) { convo.seen++; convo.gone = 0; return false; }
+	// Returns null (nothing to do), { none: true } (a conversation ended
+	// but its options never matched — do not tick), or the evidence target
+	// { key, subIndex } to tick.
+	function convoObserve(key, dialogVisible, matchedTarget) {
+		if (convo.key !== key) { convo.key = key; convo.seen = 0; convo.gone = 0; convo.evidence = null; }
+		if (dialogVisible) {
+			convo.seen++;
+			convo.gone = 0;
+			if (matchedTarget) convo.evidence = matchedTarget;
+			return null;
+		}
 		if (convo.seen >= 2) {
 			convo.gone++;
-			if (convo.gone >= 3) { convo.seen = 0; convo.gone = 0; return true; }
+			if (convo.gone >= 3) {
+				convo.seen = 0;
+				convo.gone = 0;
+				var ev = convo.evidence;
+				convo.evidence = null;
+				return ev && ev.key === key ? ev : { none: true };
+			}
 		}
-		return false;
+		return null;
 	}
 
 	function assistAvailable() {
@@ -1040,44 +1058,59 @@
 		try {
 			var pos = dialogReader.find(img);
 
-			// Auto-tick: a conversation for this step just ended.
-			if (autoAdvance && convoTrack(stepKey(step), !!pos)) {
-				clearAssistOverlay();
-				var t = assistLastTarget;
-				assistLastTarget = null;
-				if (t && t.key === stepKey(step) && t.subIndex !== null) {
-					setSubDone(step, t.subIndex, true);
-					setAssistStatus("Assist: conversation finished — sub-step ticked automatically.");
-				} else {
-					setDone(step, true);
-					setAssistStatus("Assist: conversation finished — step ticked automatically.");
+			// Read the dialogue and match options against the step targets
+			// FIRST — the result doubles as auto-tick evidence.
+			var dlg = null;
+			var allMatches = [];
+			var matchedTarget = null;
+			if (pos) {
+				dlg = dialogReader.read(img);
+				if (dlg && dlg.opts && dlg.opts.length) {
+					targets.forEach(function (t) {
+						var m = matchOptions(t.chat, dlg.opts);
+						if (m.length && !matchedTarget) matchedTarget = t;
+						m.forEach(function (o) {
+							if (allMatches.indexOf(o) === -1) allMatches.push(o);
+						});
+					});
 				}
-				return;
+			}
+
+			// Auto-tick only with evidence: the conversation that just
+			// ended must have shown one of this step's expected options.
+			if (autoAdvance) {
+				var res = convoObserve(stepKey(step), !!pos,
+					matchedTarget ? { key: stepKey(step), subIndex: matchedTarget.subIndex } : null);
+				if (res) {
+					clearAssistOverlay();
+					if (res.none) {
+						setAssistStatus("Assist: a conversation ended, but this step's options never appeared — not ticked (tick manually if it was the right one).");
+					} else if (res.subIndex !== null && res.subIndex !== undefined) {
+						setSubDone(step, res.subIndex, true);
+						setAssistStatus("Assist: conversation finished — sub-step ticked automatically.");
+						return;
+					} else {
+						setDone(step, true);
+						setAssistStatus("Assist: conversation finished — step ticked automatically.");
+						return;
+					}
+				}
 			}
 
 			if (!pos) {
 				clearAssistOverlay();
-				setAssistStatus("Assist: on — waiting for a dialogue box. Target: " +
-					targets.map(function (t) { return t.chat; }).join(" | "));
+				if (!autoAdvance || !convo.gone) {
+					setAssistStatus("Assist: on — waiting for a dialogue box. Target: " +
+						targets.map(function (t) { return t.chat; }).join(" | "));
+				}
 				return;
 			}
-			var dlg = dialogReader.read(img);
 			if (!dlg || !dlg.opts || !dlg.opts.length) {
 				clearAssistOverlay();
 				setAssistStatus("Assist: dialogue open, no options readable yet.");
 				return;
 			}
-			var allMatches = [];
-			var matchedTarget = null;
-			targets.forEach(function (t) {
-				var m = matchOptions(t.chat, dlg.opts);
-				if (m.length && !matchedTarget) matchedTarget = t;
-				m.forEach(function (o) {
-					if (allMatches.indexOf(o) === -1) allMatches.push(o);
-				});
-			});
 			if (allMatches.length) {
-				assistLastTarget = { key: stepKey(step), subIndex: matchedTarget.subIndex };
 				drawOptionBoxes(allMatches, pos);
 				setAssistStatus("Assist: highlighted \"" +
 					(allMatches[0].text || ("option " + (dlg.opts.indexOf(allMatches[0]) + 1))) + "\"" +
@@ -1100,7 +1133,8 @@
 			if (!dialogReader) dialogReader = new Dialog.default();
 			if (!chatReader && typeof Chatbox !== "undefined") chatReader = new Chatbox.default();
 			chatFound = false;
-			assistLastTarget = null;
+			convo.key = null;
+			convo.evidence = null;
 			assistTimer = setInterval(assistTick, ASSIST_INTERVAL_MS);
 			assistTick();
 			btn.textContent = "Assist: on";
@@ -2203,7 +2237,7 @@
 	window.__rs3qh = {
 		matchOptions: matchOptions,
 		parseQuickGuide: parseQuickGuide,
-		convoTrack: convoTrack,
+		convoObserve: convoObserve,
 		normName: normName,
 		parseRmPayload: parseRmPayload,
 		testOverlayCard: function () {
