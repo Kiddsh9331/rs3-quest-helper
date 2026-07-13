@@ -216,6 +216,17 @@
 		pc.getContext("2d").putImageData(card, 0, 0);
 		document.body.insertBefore(pc, document.getElementById("results"));
 
+		// Wiki links preserved through parsing for clickable names.
+		var g4 = window.__rs3qh.parseQuickGuide(
+			"==S==\n{{Checklist|\n* Talk to [[Dororan]] near [[Barbarian Village|the village]]. {{Chat options|1 Hi.}}\n** Then see [[Gudrun]].\n}}\n"
+		);
+		var ls = g4.sections[0].steps[0];
+		check("links: text stays readable", ls.text === "Talk to Dororan near the village.");
+		check("links: pages captured", ls.links.length === 2 && ls.links[0].page === "Dororan" && ls.links[1].page === "Barbarian Village");
+		check("links: piped label kept", ls.links[1].label === "the village");
+		check("links: chat unaffected", ls.chat === "1 Hi.");
+		check("links: sub-step links", ls.sub[0].links.length === 1 && ls.sub[0].links[0].page === "Gudrun");
+
 		// Quest details (main page) requirements extraction.
 		var qd = window.__rs3qh.parseQuestDetails(
 			"{{Infobox Quest|name=X}}\n{{Quest details\n|start = Talk to [[Bob]]\n|items = \n* 3 [[cadava berries]]\n* [[Rope]] (obtainable during the quest from [[Ned]])\n|recommended = \n* [[Lumbridge lodestone]] activated\n|kills = None\n}}\nRest of page."

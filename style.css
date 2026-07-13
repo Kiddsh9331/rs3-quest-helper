@@ -381,6 +381,27 @@ main {
 	margin-left: 5px;
 }
 
+.wiki-link {
+	border-bottom: 1px dotted rgba(231, 193, 90, 0.6);
+	cursor: pointer;
+}
+
+.wiki-link:hover {
+	color: var(--gold);
+	border-bottom-color: var(--gold);
+}
+
+.entity-img {
+	display: block;
+	max-width: 140px;
+	max-height: 160px;
+	float: right;
+	margin: 0 0 6px 8px;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	background: #111;
+}
+
 .chip-info {
 	background: #3a3325;
 	color: var(--gold);

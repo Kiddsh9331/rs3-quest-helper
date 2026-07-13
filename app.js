@@ -10,7 +10,7 @@
 
 	var WIKI_API = "https://runescape.wiki/api.php";
 	var INDEX_CACHE_KEY = "rs3qh-index-v1";
-	var GUIDE_CACHE_KEY = "rs3qh-guides-v5";
+	var GUIDE_CACHE_KEY = "rs3qh-guides-v6";
 	var PROGRESS_KEY = "rs3qh-progress-v2";
 	var INDEX_TTL_MS = 7 * 24 * 3600 * 1000;
 	var GUIDE_TTL_MS = 7 * 24 * 3600 * 1000;
@@ -291,6 +291,8 @@
 	var ITEM_CLOSE = "]I@@";
 	var IMG_OPEN = "@@P[";
 	var IMG_CLOSE = "]P@@";
+	var LINK_OPEN = "@@L[";
+	var LINK_CLOSE = "]L@@";
 	var NEEDED_MARK = "@@NEEDED@@";
 
 	// Split template params on top-level pipes (ignoring pipes nested in
@@ -410,7 +412,13 @@
 				return IMG_OPEN + name + "|" + caption + IMG_CLOSE;
 			})
 			.replace(/\[\[Category:[^\]]*\]\]/gi, "")
-			.replace(/\[\[[^\]|]*\|([^\]]*)\]\]/g, "$1")
+			.replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?\|([^\]]*)\]\]/g, function (_, page, label) {
+				return LINK_OPEN + page.trim() + "|" + label + LINK_CLOSE;
+			})
+			.replace(/\[\[([^\]#|]+)(?:#[^\]]*)?\]\]/g, function (_, page) {
+				var p = page.trim();
+				return LINK_OPEN + p + "|" + p + LINK_CLOSE;
+			})
 			.replace(/\[\[([^\]]*)\]\]/g, "$1")
 			.replace(/\[https?:\/\/[^\s\]]+ ([^\]]*)\]/g, "$1")
 			.replace(/'''''|'''|''/g, "")
@@ -422,8 +430,22 @@
 	function extractChat(line) {
 		var chat = [];
 		var maps = [];
+		var links = [];
 		var text = line;
 		var start;
+		// Links first: replace each sentinel with its label so every other
+		// extraction (chat, needed, notes) sees plain text; remember the
+		// page for clickable names in steps.
+		while ((start = text.indexOf(LINK_OPEN)) !== -1) {
+			var lend = text.indexOf(LINK_CLOSE, start);
+			if (lend === -1) { text = text.replace(LINK_OPEN, ""); continue; }
+			var lbody = text.slice(start + LINK_OPEN.length, lend);
+			var lsep = lbody.indexOf("|");
+			var lpage = (lsep === -1 ? lbody : lbody.slice(0, lsep)).trim();
+			var llabel = (lsep === -1 ? lbody : lbody.slice(lsep + 1)).trim();
+			if (lpage && llabel) links.push({ page: lpage, label: llabel });
+			text = text.slice(0, start) + llabel + text.slice(lend + LINK_CLOSE.length);
+		}
 		while ((start = text.indexOf(CHAT_OPEN)) !== -1) {
 			var end = text.indexOf(CHAT_CLOSE, start);
 			if (end === -1) { text = text.replace(CHAT_OPEN, ""); continue; }
@@ -467,7 +489,8 @@
 			chat: chat.join(" / ") || null,
 			maps: maps,
 			items: items,
-			images: images
+			images: images,
+			links: links
 		};
 	}
 
@@ -576,9 +599,9 @@
 				var parsedLine = extractChat(b[2]);
 				if (!parsedLine.text && !parsedLine.chat && !parsedLine.images.length) return;
 				if (depth === 1 || !lastStep()) {
-					current.steps.push({ text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps, images: parsedLine.images, sub: [] });
+					current.steps.push({ text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps, images: parsedLine.images, links: parsedLine.links, sub: [] });
 				} else {
-					lastStep().sub.push({ text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps });
+					lastStep().sub.push({ text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps, links: parsedLine.links });
 					if (parsedLine.images.length) {
 						lastStep().images = (lastStep().images || []).concat(parsedLine.images);
 					}
@@ -1556,6 +1579,74 @@
 		return a;
 	}
 
+	// Render text with its wiki-linked names (NPCs, places, items) as
+	// clickable spans opening the entity popup.
+	function appendLinkedText(container, text, links) {
+		var remaining = text || "";
+		(links || []).forEach(function (lk) {
+			var idx = remaining.indexOf(lk.label);
+			if (idx === -1) return;
+			if (idx > 0) container.appendChild(document.createTextNode(remaining.slice(0, idx)));
+			var span = el("span", "wiki-link", lk.label);
+			span.title = "Show info from the wiki";
+			span.addEventListener("click", function (e) {
+				e.stopPropagation();
+				showEntityInfo(lk.page);
+			});
+			container.appendChild(span);
+			remaining = remaining.slice(idx + lk.label.length);
+		});
+		if (remaining) container.appendChild(document.createTextNode(remaining));
+	}
+
+	var entityInfoCache = {};
+
+	// Popup for any wiki page: picture + intro (which states locations).
+	function showEntityInfo(page) {
+		var popup = document.getElementById("item-popup");
+		document.getElementById("item-popup-title").textContent = page;
+		document.getElementById("item-popup-link").href =
+			"https://runescape.wiki/w/" + encodeURIComponent(page.replace(/ /g, "_"));
+		var body = document.getElementById("item-popup-body");
+		body.textContent = "Loading from the wiki…";
+		popup.classList.remove("hidden");
+
+		function render(info) {
+			if (document.getElementById("item-popup-title").textContent !== page) return;
+			body.innerHTML = "";
+			if (info.image) {
+				var img = document.createElement("img");
+				img.src = info.image;
+				img.alt = page;
+				img.className = "entity-img";
+				img.loading = "lazy";
+				body.appendChild(img);
+			}
+			if (info.intro) body.appendChild(el("p", null, info.intro));
+			if (!info.image && !info.intro) {
+				body.appendChild(el("p", null, "No summary available — use the full wiki page link above."));
+			}
+		}
+
+		if (entityInfoCache[page]) { render(entityInfoCache[page]); return; }
+		wikiGet({
+			action: "query", prop: "extracts|pageimages", exintro: "1", explaintext: "1",
+			redirects: "1", pithumbsize: "260", titles: page
+		}, function (d) {
+			var info = { intro: "", image: null };
+			try {
+				var pages = d.query.pages;
+				var p = pages[Object.keys(pages)[0]];
+				info.intro = (p.extract || "").split("\n").slice(0, 2).join(" ");
+				if (p.thumbnail && p.thumbnail.source) info.image = p.thumbnail.source;
+			} catch (e) { /* keep defaults */ }
+			entityInfoCache[page] = info;
+			render(info);
+		}, function () {
+			render({ intro: "", image: null });
+		});
+	}
+
 	function wikiImageUrl(file, width) {
 		return "https://runescape.wiki/w/Special:FilePath/" +
 			encodeURIComponent(file.replace(/ /g, "_")) + (width ? "?width=" + width : "");
@@ -1749,7 +1840,7 @@
 				row.appendChild(box);
 
 				var body = el("div", "step-text");
-				body.appendChild(document.createTextNode(stepData.text));
+				appendLinkedText(body, stepData.text, stepData.links);
 				if (stepData.chat) body.appendChild(el("span", "chip", "Chat: " + stepData.chat));
 				(stepData.maps || []).forEach(function (m) { body.appendChild(mapChip(m)); });
 				if (stepData.note) body.appendChild(el("span", "step-note", stepData.note));
@@ -1764,7 +1855,8 @@
 						sbox.checked = subDone;
 						sbox.tabIndex = -1;
 						li.appendChild(sbox);
-						li.appendChild(document.createTextNode(" " + item.text));
+						li.appendChild(document.createTextNode(" "));
+						appendLinkedText(li, item.text, item.links);
 						if (item.chat) li.appendChild(el("span", "chip", "Chat: " + item.chat));
 						(item.maps || []).forEach(function (m) { li.appendChild(mapChip(m)); });
 						li.addEventListener("click", function (e) {
