@@ -52,7 +52,19 @@
 
 	function questProgress() {
 		if (!progress[guide.title]) progress[guide.title] = { done: {} };
-		return progress[guide.title];
+		var p = progress[guide.title];
+		if (!p.items) p.items = {};
+		return p;
+	}
+
+	function itemChecked(name) {
+		return !!questProgress().items[name.toLowerCase()];
+	}
+
+	function setItemChecked(name, val) {
+		if (val) questProgress().items[name.toLowerCase()] = true;
+		else delete questProgress().items[name.toLowerCase()];
+		store(PROGRESS_KEY, progress);
 	}
 
 	// ---------- wiki api ----------
@@ -1036,6 +1048,16 @@
 				function set(sym, cls, title, count) {
 					if (mark) { mark.textContent = sym; mark.className = "scan-mark " + cls; mark.title = title; }
 					if (countEl) countEl.textContent = count || "";
+					// A confirmed requirement ticks the item's checkbox; a
+					// failed scan never un-ticks a manual check (failsafe).
+					if (cls === "ok") {
+						setItemChecked(it.name, true);
+						var box = document.querySelector('[data-scan-box="' + i + '"]');
+						if (box) {
+							box.checked = true;
+							box.parentElement.classList.add("done");
+						}
+					}
 				}
 				if (!icons[i]) {
 					set("?", "unknown", "Could not load this item's icon");
@@ -1281,7 +1303,13 @@
 		scanList.innerHTML = "";
 		var items = currentItemNames();
 		items.forEach(function (it, i) {
-			var li = el("li", "scan-item");
+			var li = el("li", "scan-item" + (itemChecked(it.name) ? " done" : ""));
+			var box = document.createElement("input");
+			box.type = "checkbox";
+			box.checked = itemChecked(it.name);
+			box.tabIndex = -1;
+			box.setAttribute("data-scan-box", i);
+			li.appendChild(box);
 			var mark = el("span", "scan-mark", "·");
 			mark.setAttribute("data-scan-item", i);
 			li.appendChild(mark);
@@ -1289,6 +1317,13 @@
 			var count = el("span", "scan-count");
 			count.setAttribute("data-scan-count", i);
 			li.appendChild(count);
+			// Manual tick as a failsafe for anything the scanner gets wrong.
+			li.addEventListener("click", function () {
+				var now = !itemChecked(it.name);
+				setItemChecked(it.name, now);
+				box.checked = now;
+				li.classList.toggle("done", now);
+			});
 			scanList.appendChild(li);
 		});
 		document.getElementById("scan-status").textContent = "";
