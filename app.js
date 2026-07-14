@@ -1046,13 +1046,15 @@
 	// the current step's chat options. The chatbox is watched for quest
 	// completion messages.
 
-	// Fast ticks keep the highlight responsive (it expires ~600ms after the
-	// dialogue changes); conversation tracking still samples at the original
-	// 700ms cadence via CONVO_EVERY so its tick-count thresholds keep the
-	// same wall-clock meaning.
-	var ASSIST_INTERVAL_MS = 350;
-	var CONVO_EVERY = 2;
-	var CHAT_EVERY = 4;
+	// Fast ticks keep the highlight responsive — a stale box expires ~450ms
+	// after the dialogue changes (next tick usually clears it in ~200ms;
+	// Alt1's own overlay compositing adds a little on top). Conversation
+	// tracking and chat watching sample on slower cadences via CONVO_EVERY/
+	// CHAT_EVERY so their tick-count thresholds keep roughly the original
+	// wall-clock meaning (~600ms and ~1.4s).
+	var ASSIST_INTERVAL_MS = 200;
+	var CONVO_EVERY = 3;
+	var CHAT_EVERY = 7;
 	var AUTO_KEY = "rs3qh-auto-v1";
 	var assistTimer = null;
 	var assistTickN = 0;
