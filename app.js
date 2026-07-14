@@ -1086,7 +1086,10 @@
 	function optTextScore(cand, optText) {
 		if (!cand || !optText) return 0;
 		if (cand === optText) return 3;
-		if (optText.indexOf(cand) !== -1 || cand.indexOf(optText) !== -1) return 2;
+		// Substring only counts when both sides are substantial — a 1-2
+		// char OCR fragment appearing inside the candidate is noise.
+		if (cand.length >= 3 && optText.length >= 3 &&
+			(optText.indexOf(cand) !== -1 || cand.indexOf(optText) !== -1)) return 2;
 		var ctoks = cand.split(" ").filter(function (t) { return t.length > 2; });
 		if (ctoks.length < 2) return 0;
 		var otoks = optText.split(" ");
@@ -1166,6 +1169,16 @@
 
 	var chatScanMisses = 0;
 	var dialogEverFound = false;
+
+	// Boxing EVERY option is never helpful: either the guide says "Any"
+	// (any choice progresses — words beat a wall of green) or a text
+	// candidate failed to match (bad capture/OCR, wrong screen) and the
+	// Any fallback swallowed the whole screen (Reddit report: "selects
+	// every chat option in green"). The auto-tick evidence is unaffected —
+	// this only decides what gets DRAWN.
+	function allOptionsMatched(matches, opts) {
+		return opts.length >= 2 && matches.length === opts.length;
+	}
 
 	function setAssistStatus(msg) {
 		var node = document.getElementById("assist-status");
@@ -1429,7 +1442,10 @@
 				setAssistStatus("Assist: dialogue open, no options readable yet.");
 				return;
 			}
-			if (allMatches.length) {
+			if (allMatches.length && allOptionsMatched(allMatches, dlg.opts)) {
+				clearAssistOverlay();
+				setAssistStatus("Assist: any option works on this screen — pick whichever you like.");
+			} else if (allMatches.length) {
 				drawOptionBoxes(allMatches, pos, img);
 				setAssistStatus("Assist: highlighted \"" +
 					(allMatches[0].text || ("option " + (dlg.opts.indexOf(allMatches[0]) + 1))) + "\"" +
@@ -2741,6 +2757,7 @@
 		parseTimelineOrder: parseTimelineOrder,
 		fetchTimelineOrder: fetchTimelineOrder,
 		highlightShapes: highlightShapes,
+		allOptionsMatched: allOptionsMatched,
 		measureOptionButton: measureOptionButton,
 		scaleHintText: scaleHintText,
 		subCascadeAllowed: subCascadeAllowed,

@@ -248,6 +248,16 @@
 		check("number chain: never counts toward required conversations",
 			window.__rs3qh.countMatchedCandidates("1 / 1 / 1 / 4", chainOpts) === 0);
 
+		// "Every option matched" (the Any fallback) draws no boxes — words in
+		// the status line instead of a wall of green (Reddit report).
+		var aom = window.__rs3qh.allOptionsMatched;
+		var fourOpts = [{ text: "a" }, { text: "b" }, { text: "c" }, { text: "d" }];
+		check("any-fallback: all matched -> no boxes", aom(fourOpts.slice(), fourOpts) === true);
+		check("any-fallback: partial match -> boxes stay", aom(fourOpts.slice(0, 1), fourOpts) === false);
+		check("any-fallback: single-option screens still box", aom([{ text: "only" }], [{ text: "only" }]) === false);
+		check("any-fallback: matcher still returns all for evidence",
+			window.__rs3qh.matchOptions("1 No such text here / Any", fourOpts, 0).length === 4);
+
 		// A text candidate names ONE option: only the best-scoring match is
 		// boxed, so near-misses sharing common words don't light up too
 		// (Carnillean Rising: "Can you help me?" must not also box
