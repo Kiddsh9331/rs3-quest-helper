@@ -248,6 +248,20 @@
 		check("number chain: never counts toward required conversations",
 			window.__rs3qh.countMatchedCandidates("1 / 1 / 1 / 4", chainOpts) === 0);
 
+		// Dialogue targets: sub-steps outrank the parent, so a conversation
+		// matching a sub ticks the sub — the parent (often ending in "Any")
+		// can no longer claim every conversation and sweep subs done.
+		var tgtStep = {
+			text: "Talk to Gertrude.", chat: "3 Talk about the quest. / Any",
+			subs: [{ text: "Hellcat variant", chat: "4 Talk about the quest." }, { text: "no chat sub" }]
+		};
+		var tgts = window.__rs3qh.assistTargets(tgtStep, function () { return false; });
+		check("targets: sub before parent", tgts.length === 2 && tgts[0].subIndex === 0 && tgts[1].subIndex === null);
+		check("targets: done subs excluded",
+			window.__rs3qh.assistTargets(tgtStep, function () { return true; })[0].subIndex === null);
+		check("targets: chatless subs never targeted",
+			tgts.every(function (t) { return t.label !== "no chat sub"; }));
+
 		// "Every option matched" (the Any fallback) draws no boxes — words in
 		// the status line instead of a wall of green (Reddit report).
 		var aom = window.__rs3qh.allOptionsMatched;

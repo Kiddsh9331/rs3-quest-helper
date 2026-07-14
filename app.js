@@ -1142,6 +1142,21 @@
 		if (optScreen.gone >= 3) optScreen.key = null;
 	}
 
+	// Dialogue targets for a step, sub-steps FIRST: a conversation that
+	// matches a sub belongs to that sub. The parent's chat often ends in
+	// "Any", which would otherwise claim every conversation as parent
+	// evidence and (via setDone's cascade) sweep unticked subs done.
+	function assistTargets(step, subDone) {
+		var targets = [];
+		(step.subs || []).forEach(function (sub, k) {
+			if (sub.chat && !subDone(k)) {
+				targets.push({ chat: sub.chat, subIndex: k, label: sub.text });
+			}
+		});
+		if (step.chat) targets.push({ chat: step.chat, subIndex: null, label: step.text });
+		return targets;
+	}
+
 	function countMatchedCandidates(chatField, opts) {
 		var n = 0;
 		chatField.split(" / ").forEach(function (cand) {
@@ -1456,15 +1471,7 @@
 		// Highlight dialogue options for the current step and its unchecked
 		// sub-steps; auto-tick whichever one the finished conversation was for.
 		var step = currentStep();
-		var targets = [];
-		if (step) {
-			if (step.chat) targets.push({ chat: step.chat, subIndex: null, label: step.text });
-			(step.subs || []).forEach(function (sub, k) {
-				if (sub.chat && !isSubDone(step, k)) {
-					targets.push({ chat: sub.chat, subIndex: k, label: sub.text });
-				}
-			});
-		}
+		var targets = step ? assistTargets(step, function (k) { return isSubDone(step, k); }) : [];
 		if (!step || !targets.length) {
 			clearAssistOverlay();
 			setAssistStatus("Assist: on — current step has no dialogue options" + (chatFound ? "; watching chat." : "."));
@@ -1515,6 +1522,11 @@
 						setSubDone(step, res.subIndex, true);
 						setAssistStatus("Assist: conversation finished — sub-step ticked automatically.");
 						return;
+					} else if ((step.subs || []).some(function (_, k) { return !isSubDone(step, k); })) {
+						// The parent's conversation is done, but its unticked
+						// sub-steps are separate tasks — completing the step
+						// would sweep them done unearned (setDone cascades).
+						setAssistStatus("Assist: conversation finished — but this step has unticked sub-steps, so it was not completed automatically.");
 					} else {
 						setDone(step, true);
 						setAssistStatus("Assist: conversation finished — step ticked automatically.");
@@ -2846,6 +2858,7 @@
 		parseQuickGuide: parseQuickGuide,
 		convoObserve: convoObserve,
 		countMatchedCandidates: countMatchedCandidates,
+		assistTargets: assistTargets,
 		normName: normName,
 		parseRmPayload: parseRmPayload,
 		testOverlayCard: function () {
