@@ -10,7 +10,7 @@
 
 	var WIKI_API = "https://runescape.wiki/api.php";
 	var INDEX_CACHE_KEY = "rs3qh-index-v1";
-	var GUIDE_CACHE_KEY = "rs3qh-guides-v8";
+	var GUIDE_CACHE_KEY = "rs3qh-guides-v9";
 	var PROGRESS_KEY = "rs3qh-progress-v2";
 	var INDEX_TTL_MS = 7 * 24 * 3600 * 1000;
 	var GUIDE_TTL_MS = 7 * 24 * 3600 * 1000;
@@ -469,6 +469,13 @@
 				out = (args[0] || "") + " coins";
 			} else if (name === "floornumber") {
 				out = floorText(args[0], floorPref());
+			} else if (name === "questicon" || name === "questlink" || name === "questreq") {
+				// {{QuestIcon|X}} names a quest (Ironman pathway tables) —
+				// keep it as a clickable link, not dropped text.
+				out = args[0] ? LINK_OPEN + args[0] + "|" + args[0] + LINK_CLOSE : "";
+			} else if (name === "sc" || name === "scp") {
+				// {{sc|Prayer}} / {{scp|Prayer|3}} skill icons -> plain text.
+				out = (args[0] || "") + (args[1] ? " " + args[1] : "");
 			} else if (name === "sq" || name === "!") {
 				out = "|";
 			} else if (name === "npc map" || name === "object map" || name === "map" || name === "maplink") {
@@ -2104,7 +2111,9 @@
 			}
 			// A linked quest name gets a direct jump into its guide — this is
 			// what makes quest mentions in the Ironman pathway interactive.
-			var q = questIndex.find(function (x) { return normName(x.name) === normName(page); });
+			var q = questIndex.find(function (x) {
+				return normName(x.name) === normName(page) || normName(x.title) === normName(page);
+			});
 			if (q) {
 				var jump = el("button", "open-quest-btn", "Open quest in helper ▶");
 				jump.addEventListener("click", function () {

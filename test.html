@@ -299,11 +299,13 @@
 			"! style=\"width:45%;\" | Activity !! Notes !! Level\n" +
 			"|- data-rowid = \"Tutorial Island\"\n| Skip Tutorial Island \n| {{NA}}\n| {{NA}}\n" +
 			"|-\n| Complete [[Cook's Assistant]] {{Chat options|1 Yes.}}\n| Save an [[unfired bowl]]\n| 10 [[Cooking]]\n|}\n" +
+			"{|class=\"wikitable static-row-header-step\"\n! Activity !! Notes !! Level\n" +
+			"|- data-rowid = \"The Blood Pact\"\n| {{QuestIcon|The Blood Pact}} <sup>([[The Blood Pact/Quick guide|Quick Guide]])</sup>\n| Keep [[Caitlin's staff]].\n|\n* {{sc|Prayer}} 3\n|}\n" +
 			"==Part 2: Combat==\n{|class=\"wikitable static-row-header-step\"\n! A !! N !! L\n|-\n| Another step\n|\n|\n|}\n" +
 			"\n= Miniguides =\n==Dailies==\n{|class=\"wikitable static-row-header-step\"\n|-\n| Should not appear\n|\n|\n|}\n"
 		);
 		check("pathway: two sections, miniguides cut", pw.sections.length === 2 && pw.sections[1].steps.length === 1);
-		check("pathway: non-step table skipped", pw.sections[0].steps.length === 2);
+		check("pathway: non-step table skipped", pw.sections[0].steps.length === 3);
 		check("pathway: plain row", pw.sections[0].steps[0].text === "Skip Tutorial Island" && !pw.sections[0].steps[0].note);
 		var pws = pw.sections[0].steps[1];
 		check("pathway: activity text + chat", pws.text === "Complete Cook's Assistant" && pws.chat === "1 Yes.");
@@ -311,6 +313,11 @@
 			pws.links.some(function (l) { return l.page === "Cook's Assistant"; }) &&
 			pws.links.some(function (l) { return l.page === "unfired bowl"; }));
 		check("pathway: note keeps notes + level", pws.note === "Save an unfired bowl [Level: 10 Cooking]");
+		var pwq = pw.sections[0].steps[2];
+		check("pathway: QuestIcon row keeps the quest name", pwq.text === "The Blood Pact (Quick Guide)");
+		check("pathway: quest name is a clickable link",
+			pwq.links.some(function (l) { return l.page === "The Blood Pact"; }));
+		check("pathway: sc skill template renders in level", pwq.note === "Keep Caitlin's staff. [Level: Prayer 3]");
 
 		// Live: the real pathway page parses into hundreds of steps.
 		fetch("https://runescape.wiki/api.php?action=parse&page=Ironman_Mode%2FGuide%2FEfficient_Ironman_Pathway_Guide&prop=wikitext&format=json&origin=*")
