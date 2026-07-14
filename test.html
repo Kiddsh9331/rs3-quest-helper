@@ -210,6 +210,39 @@
 			document.getElementById("results").textContent += "\nLIVE rm sync FAILED: " + msg;
 		});
 
+		// Floor numbering: the wiki's {{FloorNumber|n}} parameter is the US
+		// convention; UK counts the ground floor separately.
+		var fl = window.__rs3qh.floorText;
+		check("floors: uk ground", fl(1, "uk") === "ground floor");
+		check("floors: uk 1st", fl(2, "uk") === "1st floor");
+		check("floors: uk 2nd", fl(3, "uk") === "2nd floor");
+		check("floors: us keeps number", fl(2, "us") === "2nd floor" && fl(1, "us") === "1st floor");
+		check("floors: basement", fl(0, "uk") === "basement" && fl(0, "us") === "basement");
+		check("floors: non-numeric passthrough", fl("?", "uk") === "floor ?");
+		window.__rs3qh.setFloorPref("uk");
+		var gFloor = window.__rs3qh.parseQuickGuide("==S==\n{{Checklist|\n* Go to the {{FloorNumber|2}} and look around.\n}}\n");
+		check("floors: guide renders uk by default", gFloor.sections[0].steps[0].text === "Go to the 1st floor and look around.");
+		window.__rs3qh.setFloorPref("us");
+		var gFloor2 = window.__rs3qh.parseQuickGuide("==S==\n{{Checklist|\n* Go to the {{FloorNumber|2}} and look around.\n}}\n");
+		check("floors: guide renders us when configured", gFloor2.sections[0].steps[0].text === "Go to the 2nd floor and look around.");
+		window.__rs3qh.setFloorPref("uk");
+
+		// Bare-number chains ("1 / 1 / 1 / 4") are successive screens of one
+		// conversation: with a screen index, only that screen's number is
+		// highlighted; and they never raise the conversations-required count.
+		var chainOpts = [{ text: "Alpha" }, { text: "Beta" }, { text: "Gamma" }, { text: "Delta" }];
+		var mo = window.__rs3qh.matchOptions;
+		check("number chain: screen 0 -> option 1", mo("1 / 1 / 1 / 4", chainOpts, 0).length === 1 && mo("1 / 1 / 1 / 4", chainOpts, 0)[0] === chainOpts[0]);
+		check("number chain: screen 2 -> option 1", mo("1 / 1 / 1 / 4", chainOpts, 2)[0] === chainOpts[0]);
+		check("number chain: screen 3 -> option 4", mo("1 / 1 / 1 / 4", chainOpts, 3)[0] === chainOpts[3]);
+		check("number chain: extra screens clamp to last", mo("1 / 1 / 1 / 4", chainOpts, 9)[0] === chainOpts[3]);
+		check("number chain: out-of-range number -> no boxes", mo("1 / 6", [{ text: "A" }, { text: "B" }], 1).length === 0);
+		check("number chain: without index keeps old behaviour", mo("1 / 1 / 1 / 4", chainOpts).length === 2);
+		check("number chain: text candidates unaffected by index",
+			mo("1 Convince them. / 2 Persuade. / 3 Threaten.", [{ text: "Convince them." }, { text: "Persuade." }, { text: "Threaten." }], 0).length === 3);
+		check("number chain: never counts toward required conversations",
+			window.__rs3qh.countMatchedCandidates("1 / 1 / 1 / 4", chainOpts) === 0);
+
 		// Timeline order: tables in document order, first-cell links ranked,
 		// header rows and duplicates skipped.
 		var tl = window.__rs3qh.parseTimelineOrder(

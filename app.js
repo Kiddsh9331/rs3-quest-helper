@@ -10,7 +10,7 @@
 
 	var WIKI_API = "https://runescape.wiki/api.php";
 	var INDEX_CACHE_KEY = "rs3qh-index-v1";
-	var GUIDE_CACHE_KEY = "rs3qh-guides-v6";
+	var GUIDE_CACHE_KEY = "rs3qh-guides-v7";
 	var PROGRESS_KEY = "rs3qh-progress-v2";
 	var INDEX_TTL_MS = 7 * 24 * 3600 * 1000;
 	var GUIDE_TTL_MS = 7 * 24 * 3600 * 1000;
@@ -34,6 +34,7 @@
 	var rmStatuses = null;  // { normalised quest name: "COMPLETED" | "STARTED" | "NOT_STARTED" }
 	var optimalRank = null; // { normalised quest name: position in progression guide }
 	var timelineRank = null; // { normalised quest name: position in the timeline list }
+	var currentQuestTitle = null; // wiki title of the open guide, for reloads
 	var overlayTimer = null;
 
 	// ---------- storage ----------
@@ -272,6 +273,25 @@
 		}, errcb);
 	}
 
+	// {{FloorNumber|n}}'s parameter counts the ground floor as 1 (US
+	// convention); UK convention calls that the ground floor and starts
+	// counting one storey up. The wiki shows both — we render whichever
+	// the user picked (UK by default, matching the game's own wording).
+	function ordinal(n) {
+		var v = n % 100;
+		if (v >= 11 && v <= 13) return n + "th";
+		return n + (["th", "st", "nd", "rd"][n % 10] || "th");
+	}
+	function floorText(usNum, conv) {
+		var n = parseInt(usNum, 10);
+		if (isNaN(n)) return "floor " + (usNum || "");
+		if (conv === "us") return n <= 0 ? "basement" : ordinal(n) + " floor";
+		var uk = n - 1;
+		if (uk < 0) return "basement";
+		if (uk === 0) return "ground floor";
+		return ordinal(uk) + " floor";
+	}
+
 	// The timeline page renders one wikitable per tab (Pathfinder,
 	// Adventurer, … Seasonal); row order inside each table IS the in-game
 	// timeline order, and the tabs follow each other chronologically. Walk
@@ -423,7 +443,7 @@
 			} else if (name === "coins") {
 				out = (args[0] || "") + " coins";
 			} else if (name === "floornumber") {
-				out = "floor " + (args[0] || "");
+				out = floorText(args[0], prefs.floors || "uk");
 			} else if (name === "sq" || name === "!") {
 				out = "|";
 			} else if (name === "npc map" || name === "object map" || name === "map" || name === "maplink") {
@@ -968,22 +988,43 @@
 
 	// How many distinct chat candidates of this step match the current
 	// options screen (multiple at once = "try each of these").
+	// Which option-screen of the current conversation is showing (0-based):
+	// advances when the visible options change while the dialogue stays
+	// open, resets when the conversation ends or the step changes. Drives
+	// stepping through bare-number chains like "1 / 1 / 1 / 4".
+	var optScreen = { key: null, sig: null, idx: 0, gone: 0 };
+	function screenIndexFor(key, opts) {
+		var sig = opts.map(function (o) { return o.text || ""; }).join("|");
+		if (optScreen.key !== key) {
+			optScreen.key = key; optScreen.sig = sig; optScreen.idx = 0;
+		} else if (optScreen.sig !== sig) {
+			optScreen.sig = sig; optScreen.idx++;
+		}
+		optScreen.gone = 0;
+		return optScreen.idx;
+	}
+	function screenIndexGone() {
+		if (optScreen.key === null) return;
+		optScreen.gone++;
+		if (optScreen.gone >= 3) optScreen.key = null;
+	}
+
 	function countMatchedCandidates(chatField, opts) {
 		var n = 0;
 		chatField.split(" / ").forEach(function (cand) {
 			cand = cand.trim();
 			if (/^any$/i.test(cand)) return;
 			var numMatch = /^(\d)[.)]?\s*(.*)$/.exec(cand);
-			var num = numMatch ? +numMatch[1] : null;
 			var textPart = normOpt(numMatch ? numMatch[2] : cand);
 			var matched = false;
 			if (textPart.length >= 3) {
 				opts.forEach(function (o) {
 					if (optTextMatches(textPart, normOpt(o.text || ""))) matched = true;
 				});
-			} else if (num !== null && num >= 1 && num <= opts.length) {
-				matched = true;
 			}
+			// Bare numbers never count: "1 / 1 / 1 / 4" is successive
+			// screens of ONE conversation, not options to try separately,
+			// so they must not raise the conversations-required count.
 			if (matched) n++;
 		});
 		return n;
@@ -1019,10 +1060,21 @@
 	// that does not match this screen must stay silent — falling back to
 	// its number would box the wrong option (numbers only count when the
 	// guide gives a number alone).
-	function matchOptions(chatField, opts) {
+	function matchOptions(chatField, opts, screenIdx) {
 		var picked = [];
 		var hasAny = false;
 		function add(o) { if (picked.indexOf(o) === -1) picked.push(o); }
+
+		// A chain of bare numbers ("1 / 1 / 1 / 4") is one conversation's
+		// successive screens, not simultaneous alternatives: when the
+		// caller tracks which option-screen of the conversation is shown,
+		// highlight only that screen's number.
+		var cands = chatField.split(" / ").map(function (c) { return c.trim(); });
+		if (screenIdx !== undefined && cands.length > 1 &&
+			cands.every(function (c) { return /^\d[.)]?$/.test(c); })) {
+			var cur = +cands[Math.min(screenIdx, cands.length - 1)].charAt(0);
+			return (cur >= 1 && cur <= opts.length) ? [opts[cur - 1]] : [];
+		}
 
 		chatField.split(" / ").forEach(function (cand) {
 			cand = cand.trim();
@@ -1269,8 +1321,9 @@
 			if (pos) {
 				dlg = dialogReader.read(img);
 				if (dlg && dlg.opts && dlg.opts.length) {
+					var scrIdx = screenIndexFor(stepKey(step), dlg.opts);
 					targets.forEach(function (t) {
-						var m = matchOptions(t.chat, dlg.opts);
+						var m = matchOptions(t.chat, dlg.opts, scrIdx);
 						if (m.length && !matchedTarget) matchedTarget = t;
 						m.forEach(function (o) {
 							if (allMatches.indexOf(o) === -1) allMatches.push(o);
@@ -1310,6 +1363,7 @@
 			}
 
 			if (!pos) {
+				screenIndexGone();
 				clearAssistOverlay();
 				if (!autoAdvance || !convo.gone) {
 					setAssistStatus("Assist: on — waiting for a dialogue box. Target: " +
@@ -1349,6 +1403,7 @@
 			dialogEverFound = false;
 			convo.key = null;
 			convo.evidence = null;
+			optScreen.key = null;
 			assistTickN = 0;
 			assistTimer = setInterval(assistTick, ASSIST_INTERVAL_MS);
 			assistTick();
@@ -2180,6 +2235,7 @@
 	}
 
 	function openQuest(title) {
+		currentQuestTitle = title;
 		show("view-home", false);
 		show("view-guide", true);
 		document.getElementById("guide-title").textContent = title.replace(/\/Quick guide$/, "");
@@ -2347,6 +2403,19 @@
 			prefs.sort = sortMode.value;
 			store(PREFS_KEY, prefs);
 			loadSortData();
+		});
+
+		var floorMode = document.getElementById("floor-mode");
+		floorMode.value = prefs.floors || "uk";
+		floorMode.addEventListener("change", function () {
+			prefs.floors = floorMode.value;
+			store(PREFS_KEY, prefs);
+			// Cached guides were parsed with the old wording — drop them so
+			// the next open re-parses, and re-open the current one live.
+			try { localStorage.removeItem(GUIDE_CACHE_KEY); } catch (e) { /* ignore */ }
+			if (currentQuestTitle && !document.getElementById("view-guide").classList.contains("hidden")) {
+				openQuest(currentQuestTitle);
+			}
 		});
 
 		document.getElementById("btn-next").addEventListener("click", function () {
@@ -2549,6 +2618,8 @@
 		questLockNote: questLockNote,
 		locationLockNote: locationLockNote,
 		fetchRuneMetrics: fetchRuneMetrics,
+		floorText: floorText,
+		setFloorPref: function (v) { prefs.floors = v; },
 		parseTimelineOrder: parseTimelineOrder,
 		fetchTimelineOrder: fetchTimelineOrder,
 		highlightShapes: highlightShapes,
