@@ -289,6 +289,32 @@
 			shp.every(function (s) { return s.kind !== "rect" || s.lw <= 2; }));
 		check("highlight: chevron sits inside the left edge",
 			lines.every(function (s) { return s.x1 >= 20 && s.x2 <= 20 + 20; }));
+		// Button measurement: the highlight hugs the real dark button bar
+		// found in a crop around the OCR'd row, glyph holes and a
+		// neighbouring button at the crop edge notwithstanding.
+		function mockCrop(w, h, bars) {
+			var d = new Uint8ClampedArray(w * h * 4);
+			for (var i = 0; i < w * h; i++) { d[i * 4] = 200; d[i * 4 + 1] = 190; d[i * 4 + 2] = 170; d[i * 4 + 3] = 255; }
+			(bars || []).forEach(function (b) {
+				for (var y = b.y; y < b.y + b.h; y++) {
+					for (var x = b.x; x < b.x + b.w; x++) {
+						var j = (y * w + x) * 4;
+						// Light "glyph" pixels poke holes mid-button.
+						var glyph = y > b.y + 5 && y < b.y + b.h - 5 && ((x - b.x) % 9) < 2 && x > b.x + 30 && x < b.x + b.w - 30;
+						d[j] = glyph ? 235 : 40; d[j + 1] = glyph ? 230 : 38; d[j + 2] = glyph ? 215 : 35;
+					}
+				}
+			});
+			return { width: w, height: h, data: d };
+		}
+		var meas = window.__rs3qh.measureOptionButton;
+		var m1 = meas(mockCrop(480, 28, [{ x: 45, y: 4, w: 390, h: 20 }]));
+		check("button measure: horizontal extent", m1 && Math.abs(m1.x - 45) <= 3 && Math.abs(m1.w - 390) <= 6);
+		check("button measure: vertical extent", m1 && Math.abs(m1.y - 4) <= 2 && Math.abs(m1.h - 20) <= 4);
+		check("button measure: plain parchment gives null", meas(mockCrop(480, 28, [])) === null);
+		var m2 = meas(mockCrop(480, 28, [{ x: 45, y: 4, w: 390, h: 20 }, { x: 45, y: 27, w: 390, h: 1 }]));
+		check("button measure: neighbour at crop edge not swallowed", m2 && m2.y + m2.h <= 25);
+
 		// Visual preview: the shapes stroked over a mock dialogue option row.
 		var prev = document.createElement("canvas");
 		prev.width = 300; prev.height = 46;

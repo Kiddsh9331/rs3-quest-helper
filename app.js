@@ -1025,6 +1025,53 @@
 	// it can be tested headless; drawOptionBoxes renders it.
 	var HL_BRIGHT = mixColor(141, 255, 90);
 	var HL_DIM = mixColor(52, 110, 34);
+
+	// Find the dark option button inside a crop centred on the OCR'd text
+	// row, so the highlight hugs the real button instead of guessing its
+	// size from text length. RS3 buttons are near-black bars on parchment;
+	// their light glyphs only poke small holes in the darkness. Returns
+	// {x, y, w, h} relative to the crop, or null when nothing button-like
+	// is there (legacy skin draws plain text — the caller falls back).
+	function measureOptionButton(crop) {
+		var w = crop.width, h = crop.height, d = crop.data;
+		function dark(px, py) {
+			var i = (py * w + px) * 4;
+			return d[i] + d[i + 1] + d[i + 2] < 250;
+		}
+		var mid = Math.floor(h / 2);
+		var probes = [mid - 4, mid, mid + 4];
+		function anyDark(px) {
+			for (var r = 0; r < probes.length; r++) if (dark(px, probes[r])) return true;
+			return false;
+		}
+		// Horizontal extent: a >=3px dark run from either side marks the
+		// button caps (single dark specks on parchment don't count).
+		var left = -1, right = -1, run = 0, px;
+		for (px = 0; px < w; px++) {
+			run = anyDark(px) ? run + 1 : 0;
+			if (run >= 3) { left = px - 2; break; }
+		}
+		run = 0;
+		for (px = w - 1; px >= 0; px--) {
+			run = anyDark(px) ? run + 1 : 0;
+			if (run >= 3) { right = px + 2; break; }
+		}
+		if (left < 0 || right - left < 60) return null;
+		// Vertical extent: grow from the middle row while rows stay mostly
+		// dark, so a neighbouring option at the crop's edge is never
+		// swallowed (the parchment gap between buttons stops the growth).
+		function rowDark(py) {
+			var cnt = 0, tot = 0;
+			for (var qx = left; qx <= right; qx += 4) { tot++; if (dark(qx, py)) cnt++; }
+			return cnt / tot > 0.45;
+		}
+		if (!rowDark(mid)) return null;
+		var top = mid, bottom = mid;
+		while (top > 0 && rowDark(top - 1)) top--;
+		while (bottom < h - 1 && rowDark(bottom + 1)) bottom++;
+		if (bottom - top < 8) return null;
+		return { x: left, y: top, w: right - left + 1, h: bottom - top + 1 };
+	}
 	function highlightShapes(x, y, w, h) {
 		var cy = Math.round(y + h / 2);
 		return [
@@ -1036,7 +1083,7 @@
 		];
 	}
 
-	function drawOptionBoxes(matches, dialogPos) {
+	function drawOptionBoxes(matches, dialogPos, img) {
 		try {
 			alt1.overLaySetGroup("rs3qh-assist");
 			alt1.overLayFreezeGroup("rs3qh-assist");
@@ -1046,24 +1093,36 @@
 			// lingering over whatever replaced the options.
 			var ttl = ASSIST_INTERVAL_MS + 250;
 			matches.forEach(function (o) {
-				// The reader's per-option width measurement is unreliable on
-				// the current RS3 dialogue skin, so size the box from the
-				// OCR'd text length (~8px/char mono font) plus room for the
-				// number and arrows. RS3 centres option buttons in the
-				// dialogue; legacy mode left-aligns them.
-				var textw = ((o.text || "").length * 8) + 120;
-				var x, w;
-				if (dialogPos && dialogPos.width && !dialogPos.legacy) {
-					w = Math.min(Math.max(textw, 170), dialogPos.width - 16);
-					x = dialogPos.x + Math.round((dialogPos.width - w) / 2);
-				} else if (dialogPos && dialogPos.width) {
-					w = Math.min(Math.max(textw, 170), dialogPos.width - 16);
-					x = Math.max(o.x - 50, dialogPos.x + 8);
-				} else {
-					x = (o.buttonx || o.x - 4) - 2;
-					w = Math.max(textw, 260);
+				// Best case: measure the actual button from the capture so
+				// the highlight hugs it exactly.
+				var box = null;
+				if (img && dialogPos && dialogPos.width) {
+					try {
+						var cx0 = dialogPos.x + 6, cy0 = o.y - 14;
+						var mb = measureOptionButton(img.toData(cx0, cy0, dialogPos.width - 12, 28));
+						if (mb) box = { x: cx0 + mb.x, y: cy0 + mb.y, w: mb.w, h: mb.h };
+					} catch (e3) { /* capture crop failed — fall through */ }
 				}
-				highlightShapes(x, o.y - 10, w, 26).forEach(function (s) {
+				if (!box) {
+					// Fallback: size the box from the OCR'd text length
+					// (~8px/char mono font) plus room for the number and
+					// arrows. RS3 centres option buttons in the dialogue;
+					// legacy mode left-aligns them.
+					var textw = ((o.text || "").length * 8) + 120;
+					var x, w;
+					if (dialogPos && dialogPos.width && !dialogPos.legacy) {
+						w = Math.min(Math.max(textw, 170), dialogPos.width - 16);
+						x = dialogPos.x + Math.round((dialogPos.width - w) / 2);
+					} else if (dialogPos && dialogPos.width) {
+						w = Math.min(Math.max(textw, 170), dialogPos.width - 16);
+						x = Math.max(o.x - 50, dialogPos.x + 8);
+					} else {
+						x = (o.buttonx || o.x - 4) - 2;
+						w = Math.max(textw, 260);
+					}
+					box = { x: x, y: o.y - 10, w: w, h: 26 };
+				}
+				highlightShapes(box.x, box.y, box.w, box.h).forEach(function (s) {
 					if (s.kind === "rect") {
 						alt1.overLayRect(s.color, s.x, s.y, s.w, s.h, ttl, s.lw);
 					} else if (typeof alt1.overLayLine === "function") {
@@ -1201,7 +1260,7 @@
 				return;
 			}
 			if (allMatches.length) {
-				drawOptionBoxes(allMatches, pos);
+				drawOptionBoxes(allMatches, pos, img);
 				setAssistStatus("Assist: highlighted \"" +
 					(allMatches[0].text || ("option " + (dlg.opts.indexOf(allMatches[0]) + 1))) + "\"" +
 					(matchedTarget.subIndex !== null ? " (sub-step)" : ""));
@@ -2372,6 +2431,7 @@
 		locationLockNote: locationLockNote,
 		fetchRuneMetrics: fetchRuneMetrics,
 		highlightShapes: highlightShapes,
+		measureOptionButton: measureOptionButton,
 		subCascadeAllowed: subCascadeAllowed,
 		setAuto: function (v) { autoAdvance = v; }
 	};
