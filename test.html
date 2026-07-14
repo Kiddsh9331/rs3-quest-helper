@@ -289,6 +289,14 @@
 			shp.every(function (s) { return s.kind !== "rect" || s.lw <= 2; }));
 		check("highlight: chevron sits inside the left edge",
 			lines.every(function (s) { return s.x1 >= 20 && s.x2 <= 20 + 20; }));
+		// Interface-scale disclaimer: shown only when nothing has EVER been
+		// recognised (chatbox never found after enough scans, no dialogue).
+		var hint = window.__rs3qh.scaleHintText;
+		check("scale hint: appears after sustained misses", /interface\s*scale/.test(hint(8, false, false)));
+		check("scale hint: silent while still warming up", hint(3, false, false) === "");
+		check("scale hint: silent when chatbox was found", hint(20, true, false) === "");
+		check("scale hint: silent when a dialogue was read", hint(20, false, true) === "");
+
 		// Button measurement: the highlight hugs the real dark button bar
 		// found in a crop around the OCR'd row, glyph holes and a
 		// neighbouring button at the crop edge notwithstanding.

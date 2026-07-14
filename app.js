@@ -1002,8 +1002,23 @@
 		return picked;
 	}
 
+	// Alt1's readers only match the interface pixel-for-pixel at 100% scale.
+	// The chatbox is always on screen, so when it has never been recognised
+	// and no dialogue has either, the interface is almost certainly scaled —
+	// say so instead of failing silently. Pure so it can be tested.
+	function scaleHintText(chatMisses, anyChatFound, anyDialogFound) {
+		if (anyChatFound || anyDialogFound || chatMisses < 8) return "";
+		return " ⚠ Nothing on screen is being recognised — if your in-game interface " +
+			"scale isn't 100% (graphics settings), Alt1 apps can't read the interface. " +
+			"The guide and overlay still work at any scale.";
+	}
+
+	var chatScanMisses = 0;
+	var dialogEverFound = false;
+
 	function setAssistStatus(msg) {
 		var node = document.getElementById("assist-status");
+		if (msg) msg += scaleHintText(chatScanMisses, chatFound, dialogEverFound);
 		node.textContent = msg || "";
 		node.classList.toggle("hidden", !msg);
 	}
@@ -1166,6 +1181,7 @@
 				if (!chatFound) {
 					var boxes = chatReader.find(img);
 					chatFound = !!(boxes && boxes.length);
+					if (!chatFound) chatScanMisses++;
 				}
 				if (chatFound) {
 					var lines = chatReader.read(img) || [];
@@ -1197,6 +1213,7 @@
 		}
 		try {
 			var pos = dialogReader.find(img);
+			if (pos) dialogEverFound = true;
 
 			// Read the dialogue and match options against the step targets
 			// FIRST — the result doubles as auto-tick evidence.
@@ -1282,6 +1299,8 @@
 			if (!dialogReader) dialogReader = new Dialog.default();
 			if (!chatReader && typeof Chatbox !== "undefined") chatReader = new Chatbox.default();
 			chatFound = false;
+			chatScanMisses = 0;
+			dialogEverFound = false;
 			convo.key = null;
 			convo.evidence = null;
 			assistTickN = 0;
@@ -1623,7 +1642,7 @@
 				status.textContent = "Could not capture the game screen.";
 				return;
 			}
-			var okCount = 0, total = 0;
+			var okCount = 0, total = 0, anyHit = false;
 			items.forEach(function (it, i) {
 				var mark = document.querySelector('[data-scan-item="' + i + '"]');
 				var countEl = document.querySelector('[data-scan-count="' + i + '"]');
@@ -1649,6 +1668,7 @@
 				var qty = it.qty || 1;
 				var hits = [];
 				try { hits = img.findSubimage(icons[i].img); } catch (e) { /* keep empty */ }
+				if (hits.length) anyHit = true;
 
 				if (!hits.length) {
 					set("✗", "missing", "Not visible — check your bank", qty > 1 ? "0/" + qty : "");
@@ -1676,7 +1696,12 @@
 			items.forEach(function (it) { if (itemChecked(it.name)) collected++; });
 			status.textContent = collected + "/" + items.length + " collected (" + okCount +
 				" confirmed by scan" + (collected > okCount ? ", " + (collected - okCount) + " ticked manually" : "") +
-				"). Backpack must be open and visible.";
+				"). Backpack must be open and visible." +
+				// Zero matches across every icon points at a scaled interface
+				// rather than an empty backpack.
+				(total > 0 && !anyHit
+					? " ⚠ Nothing matched at all — if your in-game interface scale isn't 100% (graphics settings), Alt1 can't recognise item icons."
+					: "");
 		});
 	}
 
@@ -2451,6 +2476,7 @@
 		fetchRuneMetrics: fetchRuneMetrics,
 		highlightShapes: highlightShapes,
 		measureOptionButton: measureOptionButton,
+		scaleHintText: scaleHintText,
 		subCascadeAllowed: subCascadeAllowed,
 		setAuto: function (v) { autoAdvance = v; }
 	};
