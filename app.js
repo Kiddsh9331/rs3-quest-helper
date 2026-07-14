@@ -1017,56 +1017,23 @@
 		} catch (e) { /* ignore */ }
 	}
 
-	// Rounded, glowing highlight pill rendered once per size and cached as an
-	// Alt1-encoded image string. The translucent fill tints the option without
-	// hiding its text; the chevron marks it as "pick this one".
-	var hlSpriteCache = {};
-	function highlightSprite(w, h) {
-		var key = w + "x" + h;
-		if (hlSpriteCache[key]) return hlSpriteCache[key];
-		var cv = document.createElement("canvas");
-		cv.width = w; cv.height = h;
-		var ctx = cv.getContext("2d");
-		function pill(inset) {
-			var r = Math.min(10, (h - inset * 2) / 2);
-			var x0 = inset, y0 = inset, x1 = w - inset, y1 = h - inset;
-			ctx.beginPath();
-			ctx.moveTo(x0 + r, y0);
-			ctx.arcTo(x1, y0, x1, y1, r);
-			ctx.arcTo(x1, y1, x0, y1, r);
-			ctx.arcTo(x0, y1, x0, y0, r);
-			ctx.arcTo(x0, y0, x1, y0, r);
-			ctx.closePath();
-		}
-		// Soft outer glow behind the border.
-		ctx.save();
-		ctx.shadowColor = "rgba(141, 255, 90, 0.9)";
-		ctx.shadowBlur = 5;
-		pill(4);
-		ctx.strokeStyle = "rgba(141, 255, 90, 0.95)";
-		ctx.lineWidth = 2;
-		ctx.stroke();
-		ctx.restore();
-		// Translucent gradient fill — keeps the option text readable.
-		var g = ctx.createLinearGradient(0, 0, 0, h);
-		g.addColorStop(0, "rgba(141, 255, 90, 0.20)");
-		g.addColorStop(1, "rgba(141, 255, 90, 0.05)");
-		pill(5);
-		ctx.fillStyle = g;
-		ctx.fill();
-		// Chevron on the left edge.
-		ctx.strokeStyle = "rgba(180, 255, 140, 0.95)";
-		ctx.lineWidth = 2.5;
-		ctx.lineCap = "round";
-		ctx.lineJoin = "round";
-		ctx.beginPath();
-		ctx.moveTo(11, h / 2 - 5);
-		ctx.lineTo(16, h / 2);
-		ctx.lineTo(11, h / 2 + 5);
-		ctx.stroke();
-		var data = ctx.getImageData(0, 0, w, h);
-		hlSpriteCache[key] = { str: A1lib.encodeImageString(data), w: w, h: h, data: data };
-		return hlSpriteCache[key];
+	// Alt1 image overlays cannot blend with the game (semi-transparent
+	// pixels composite against black and cover whatever is underneath), so
+	// the highlight is built from outline primitives that leave the option
+	// text untouched: a "neon" border — dim outer ring, bright core, dim
+	// inner ring — plus a chevron pointing at the choice. Pure geometry so
+	// it can be tested headless; drawOptionBoxes renders it.
+	var HL_BRIGHT = mixColor(141, 255, 90);
+	var HL_DIM = mixColor(52, 110, 34);
+	function highlightShapes(x, y, w, h) {
+		var cy = Math.round(y + h / 2);
+		return [
+			{ kind: "rect", color: HL_DIM, x: x - 3, y: y - 3, w: w + 6, h: h + 6, lw: 1 },
+			{ kind: "rect", color: HL_BRIGHT, x: x - 1, y: y - 1, w: w + 2, h: h + 2, lw: 2 },
+			{ kind: "rect", color: HL_DIM, x: x + 1, y: y + 1, w: w - 2, h: h - 2, lw: 1 },
+			{ kind: "line", color: HL_BRIGHT, lw: 3, x1: x + 8, y1: cy - 5, x2: x + 14, y2: cy },
+			{ kind: "line", color: HL_BRIGHT, lw: 3, x1: x + 14, y1: cy, x2: x + 8, y2: cy + 5 }
+		];
 	}
 
 	function drawOptionBoxes(matches, dialogPos) {
@@ -1096,17 +1063,13 @@
 					x = (o.buttonx || o.x - 4) - 2;
 					w = Math.max(textw, 260);
 				}
-				try {
-					// Sprite bounds extend ~4px past the old rect so the
-					// border lands in the same place with glow around it.
-					// Width snaps to 8px steps so the size cache stays small.
-					var sw = Math.ceil((w + 10) / 8) * 8;
-					var sp = highlightSprite(sw, 32);
-					alt1.overLayImage(x - 5, o.y - 13, sp.str, sp.w, ttl);
-				} catch (e2) {
-					// Image overlays unavailable — plain rect fallback.
-					alt1.overLayRect(mixColor(127, 255, 80), x, o.y - 9, w, 24, ttl, 2);
-				}
+				highlightShapes(x, o.y - 10, w, 26).forEach(function (s) {
+					if (s.kind === "rect") {
+						alt1.overLayRect(s.color, s.x, s.y, s.w, s.h, ttl, s.lw);
+					} else if (typeof alt1.overLayLine === "function") {
+						alt1.overLayLine(s.color, s.lw, s.x1, s.y1, s.x2, s.y2, ttl);
+					}
+				});
 			});
 			alt1.overLayRefreshGroup("rs3qh-assist");
 		} catch (e) { /* overlay unavailable */ }
@@ -2408,7 +2371,7 @@
 		questLockNote: questLockNote,
 		locationLockNote: locationLockNote,
 		fetchRuneMetrics: fetchRuneMetrics,
-		highlightSprite: highlightSprite,
+		highlightShapes: highlightShapes,
 		subCascadeAllowed: subCascadeAllowed,
 		setAuto: function (v) { autoAdvance = v; }
 	};

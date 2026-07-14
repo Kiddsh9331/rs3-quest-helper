@@ -272,32 +272,43 @@
 			casc({ text: "Do all of the following:", subs: [{ text: "a" }, { text: "b" }] }));
 		check("cascade: no subs — nothing to cascade", !casc({ text: "Plain step." }));
 
-		// Assist highlight sprite: rounded glowing pill, cached per size,
-		// pre-encoded for alt1.overLayImage.
-		var sp = window.__rs3qh.highlightSprite(280, 32);
-		check("highlight sprite: size kept", sp.w === 280 && sp.h === 32);
-		check("highlight sprite: encoded string", typeof sp.str === "string" && sp.str.length > 100);
-		check("highlight sprite: cached by size", window.__rs3qh.highlightSprite(280, 32) === sp);
-		check("highlight sprite: sizes independent", window.__rs3qh.highlightSprite(184, 32) !== sp);
-		// Border visible, centre translucent so the option text stays readable.
-		var d = sp.data.data;
-		function alphaAt(x, y) { return d[(y * sp.w + x) * 4 + 3]; }
-		check("highlight sprite: border drawn", alphaAt(140, 4) > 120);
-		check("highlight sprite: centre translucent", alphaAt(140, 16) < 90);
-		check("highlight sprite: chevron drawn", alphaAt(16, 16) > 150);
-		check("highlight sprite: glow corners transparent", alphaAt(0, 0) === 0 && alphaAt(sp.w - 1, sp.h - 1) === 0);
-		// Visual preview: the sprite composited over a mock dialogue option row.
+		// Assist highlight shapes: outline-only primitives (Alt1 image
+		// overlays cannot blend with the game, so nothing may fill the
+		// option's interior).
+		var shp = window.__rs3qh.highlightShapes(20, 10, 260, 26);
+		var rects = shp.filter(function (s) { return s.kind === "rect"; });
+		var lines = shp.filter(function (s) { return s.kind === "line"; });
+		check("highlight: 3 border rings + 2 chevron lines", rects.length === 3 && lines.length === 2);
+		check("highlight: rings are concentric",
+			rects[0].x < rects[1].x && rects[1].x < rects[2].x &&
+			rects[0].x + rects[0].w > rects[1].x + rects[1].w &&
+			rects[1].x + rects[1].w > rects[2].x + rects[2].w);
+		check("highlight: bright core between dim rings",
+			rects[1].color !== rects[0].color && rects[0].color === rects[2].color);
+		check("highlight: nothing fills the interior — text stays visible",
+			shp.every(function (s) { return s.kind !== "rect" || s.lw <= 2; }));
+		check("highlight: chevron sits inside the left edge",
+			lines.every(function (s) { return s.x1 >= 20 && s.x2 <= 20 + 20; }));
+		// Visual preview: the shapes stroked over a mock dialogue option row.
 		var prev = document.createElement("canvas");
-		prev.width = 300; prev.height = 44;
+		prev.width = 300; prev.height = 46;
 		prev.style.margin = "10px";
 		var pg = prev.getContext("2d");
-		pg.fillStyle = "#c7b9a1"; pg.fillRect(0, 0, 300, 44);
+		pg.fillStyle = "#c7b9a1"; pg.fillRect(0, 0, 300, 46);
 		pg.fillStyle = "#3f2d20"; pg.font = "14px monospace";
-		pg.fillText("1. Yes, I will help you.", 34, 26);
-		var spc = document.createElement("canvas");
-		spc.width = sp.w; spc.height = sp.h;
-		spc.getContext("2d").putImageData(sp.data, 0, 0);
-		pg.drawImage(spc, 10, 6);
+		pg.fillText("1. Yes, I will help you.", 44, 27);
+		function cssCol(c) {
+			return "rgb(" + ((c >> 16) & 255) + "," + ((c >> 8) & 255) + "," + (c & 255) + ")";
+		}
+		shp.forEach(function (s) {
+			pg.lineWidth = s.lw;
+			pg.strokeStyle = cssCol(s.color);
+			if (s.kind === "rect") pg.strokeRect(s.x, s.y, s.w, s.h);
+			else {
+				pg.lineCap = "round";
+				pg.beginPath(); pg.moveTo(s.x1, s.y1); pg.lineTo(s.x2, s.y2); pg.stroke();
+			}
+		});
 		document.body.insertBefore(prev, document.getElementById("results"));
 
 		// Wiki links preserved through parsing for clickable names.
