@@ -210,6 +210,30 @@
 			document.getElementById("results").textContent += "\nLIVE rm sync FAILED: " + msg;
 		});
 
+		// Timeline order: tables in document order, first-cell links ranked,
+		// header rows and duplicates skipped.
+		var tl = window.__rs3qh.parseTimelineOrder(
+			'<div><table class="wikitable"><tr><th>Name</th><th>QP</th></tr>' +
+			'<tr><td><a href="/w/Cook%27s_Assistant" title="Cook\'s Assistant">Cook\'s Assistant</a></td><td>1</td></tr>' +
+			'<tr><td><a href="/w/Demon_Slayer" title="Demon Slayer">Demon Slayer</a></td><td>3</td></tr></table>' +
+			'<table class="wikitable"><tr><th>Name</th></tr>' +
+			'<tr><td><a href="/w/Ritual_of_the_Mahjarrat" title="Ritual of the Mahjarrat">Ritual of the Mahjarrat</a></td></tr>' +
+			'<tr><td><a href="/w/Demon_Slayer" title="Demon Slayer">Demon Slayer</a></td></tr></table></div>'
+		);
+		check("timeline: ranks across tables in order",
+			!!tl && tl[nn("Cook's Assistant")] === 0 && tl[nn("Demon Slayer")] === 1 && tl[nn("Ritual of the Mahjarrat")] === 2);
+		check("timeline: duplicate keeps first rank", Object.keys(tl).length === 3);
+		check("timeline: no tables -> null", window.__rs3qh.parseTimelineOrder("<p>nothing</p>") === null);
+
+		// Live end-to-end: the real timeline page parses into a big ranking.
+		window.__rs3qh.fetchTimelineOrder(function (rank) {
+			var n = Object.keys(rank).length;
+			document.getElementById("results").textContent +=
+				"\nLIVE timeline OK: " + n + " quests" + (rank[nn("Cook's Assistant")] === 0 ? " (Cook's Assistant #1)" : " (WARNING: Cook's Assistant not first)");
+		}, function (msg) {
+			document.getElementById("results").textContent += "\nLIVE timeline FAILED: " + msg;
+		});
+
 		// Item info: recipe and shop-table parsing.
 		var rec = window.__rs3qh.parseRecipe(
 			"{{Infobox Recipe\n|skill1 = Herblore\n|skill1lvl = 5\n|mat1 = Marrentill potion (unf)\n|mat2 = Unicorn horn dust\n|mat2quantity = 1\n|output1 = Antipoison (3)\n}}"

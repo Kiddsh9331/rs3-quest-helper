@@ -22,6 +22,8 @@
 	var RM_TTL_MS = 30 * 60 * 1000;
 	var ORDER_CACHE_KEY = "rs3qh-order-v1";
 	var ORDER_TTL_MS = 7 * 24 * 3600 * 1000;
+	var TIMELINE_CACHE_KEY = "rs3qh-timeline-v1";
+	var TIMELINE_TTL_MS = 7 * 24 * 3600 * 1000;
 	var PREFS_KEY = "rs3qh-prefs-v1";
 
 	var questIndex = [];    // [{ title: "X/Quick guide", name: "X" }]
@@ -31,6 +33,7 @@
 	var prefs = load(PREFS_KEY, { rsn: "", hideDone: false, sort: "az" });
 	var rmStatuses = null;  // { normalised quest name: "COMPLETED" | "STARTED" | "NOT_STARTED" }
 	var optimalRank = null; // { normalised quest name: position in progression guide }
+	var timelineRank = null; // { normalised quest name: position in the timeline list }
 	var overlayTimer = null;
 
 	// ---------- storage ----------
@@ -265,6 +268,49 @@
 				return;
 			}
 			store(ORDER_CACHE_KEY, { ts: Date.now(), rank: rank });
+			cb(rank);
+		}, errcb);
+	}
+
+	// The timeline page renders one wikitable per tab (Pathfinder,
+	// Adventurer, … Seasonal); row order inside each table IS the in-game
+	// timeline order, and the tabs follow each other chronologically. Walk
+	// every table in document order and rank the first-cell quest links.
+	function parseTimelineOrder(html) {
+		var doc = new DOMParser().parseFromString(html, "text/html");
+		var tables = doc.querySelectorAll("table.wikitable");
+		var rank = {}, n = 0;
+		for (var t = 0; t < tables.length; t++) {
+			var rows = tables[t].querySelectorAll("tr");
+			for (var r = 0; r < rows.length; r++) {
+				var cell = rows[r].querySelector("td");
+				if (!cell) continue; // header row
+				var a = cell.querySelector("a[title]");
+				if (!a) continue;
+				var key = normName(a.getAttribute("title"));
+				if (key && !(key in rank)) rank[key] = n++;
+			}
+		}
+		return n ? rank : null;
+	}
+
+	function fetchTimelineOrder(cb, errcb) {
+		var cached = load(TIMELINE_CACHE_KEY, null);
+		if (cached && Date.now() - cached.ts < TIMELINE_TTL_MS) {
+			cb(cached.rank);
+			return;
+		}
+		wikiGet({ action: "parse", page: "List_of_quests_by_timeline", prop: "text" }, function (data) {
+			if (!data.parse || !data.parse.text) {
+				errcb("Could not load the timeline quest list.");
+				return;
+			}
+			var rank = parseTimelineOrder(data.parse.text["*"]);
+			if (!rank) {
+				errcb("The timeline page format changed — could not extract an order.");
+				return;
+			}
+			store(TIMELINE_CACHE_KEY, { ts: Date.now(), rank: rank });
 			cb(rank);
 		}, errcb);
 	}
@@ -1921,11 +1967,19 @@
 		return rmStatuses ? rmStatuses[normName(q.name)] || null : null;
 	}
 
+	// The rank map behind the current sort mode, if one applies and loaded.
+	function activeRank() {
+		if (prefs.sort === "optimal") return optimalRank;
+		if (prefs.sort === "timeline") return timelineRank;
+		return null;
+	}
+
 	function sortedIndex() {
 		var list = questIndex.slice();
-		if (prefs.sort === "optimal" && optimalRank) {
+		var rank = activeRank();
+		if (rank) {
 			list.sort(function (a, b) {
-				var ra = optimalRank[normName(a.name)], rb = optimalRank[normName(b.name)];
+				var ra = rank[normName(a.name)], rb = rank[normName(b.name)];
 				if (ra === undefined && rb === undefined) return a.name.localeCompare(b.name);
 				if (ra === undefined) return 1;
 				if (rb === undefined) return -1;
@@ -1940,15 +1994,15 @@
 		var main = document.getElementById("quest-list");
 		main.innerHTML = "";
 		var shown = 0, hidden = 0;
-		var optimal = prefs.sort === "optimal" && optimalRank;
+		var rankMap = activeRank();
 		sortedIndex().forEach(function (q) {
 			if (filter && q.name.toLowerCase().indexOf(filter) === -1) return;
 			var status = questStatus(q);
 			if (prefs.hideDone && status === "COMPLETED") { hidden++; return; }
 			shown++;
 			var row = el("div", "quest-row");
-			if (optimal) {
-				var rank = optimalRank[normName(q.name)];
+			if (rankMap) {
+				var rank = rankMap[normName(q.name)];
 				row.appendChild(el("span", "quest-rank", rank === undefined ? "—" : "#" + (rank + 1)));
 			}
 			row.appendChild(el("span", "quest-name", q.name));
@@ -2233,6 +2287,28 @@
 		});
 	}
 
+	function loadTimelineOrder() {
+		if (timelineRank) { renderList(); return; }
+		setStatus("sync-status", "Loading the timeline quest order from the wiki…");
+		fetchTimelineOrder(function (rank) {
+			timelineRank = rank;
+			setStatus("sync-status", "");
+			renderList();
+		}, function (msg) {
+			setStatus("sync-status", msg);
+			prefs.sort = "az";
+			document.getElementById("sort-mode").value = "az";
+			store(PREFS_KEY, prefs);
+		});
+	}
+
+	// Kick off whichever rank data the current sort mode needs.
+	function loadSortData() {
+		if (prefs.sort === "optimal") loadOptimalOrder();
+		else if (prefs.sort === "timeline") loadTimelineOrder();
+		else renderList();
+	}
+
 	function init() {
 		document.getElementById("search").addEventListener("input", renderList);
 		document.getElementById("btn-home").addEventListener("click", goHome);
@@ -2270,8 +2346,7 @@
 		sortMode.addEventListener("change", function () {
 			prefs.sort = sortMode.value;
 			store(PREFS_KEY, prefs);
-			if (prefs.sort === "optimal") loadOptimalOrder();
-			else renderList();
+			loadSortData();
 		});
 
 		document.getElementById("btn-next").addEventListener("click", function () {
@@ -2425,7 +2500,7 @@
 			// refresh the statuses automatically for the saved name.
 			var rmCached = load(RM_CACHE_KEY, null);
 			if (rmCached && rmCached.name === prefs.rsn) rmStatuses = rmCached.statuses;
-			if (prefs.sort === "optimal") loadOptimalOrder();
+			loadSortData();
 			renderList();
 			autoSyncRuneMetrics();
 
@@ -2474,6 +2549,8 @@
 		questLockNote: questLockNote,
 		locationLockNote: locationLockNote,
 		fetchRuneMetrics: fetchRuneMetrics,
+		parseTimelineOrder: parseTimelineOrder,
+		fetchTimelineOrder: fetchTimelineOrder,
 		highlightShapes: highlightShapes,
 		measureOptionButton: measureOptionButton,
 		scaleHintText: scaleHintText,
