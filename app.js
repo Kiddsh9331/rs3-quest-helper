@@ -282,6 +282,17 @@
 		if (v >= 11 && v <= 13) return n + "th";
 		return n + (["th", "st", "nd", "rd"][n % 10] || "th");
 	}
+	// Best available guess when the user hasn't picked a convention: the
+	// "ground floor = 1st floor" counting is essentially North American,
+	// so US wording for en-US/en-CA browser locales, UK for everything
+	// else. The toolbar dropdown always overrides this.
+	function floorPrefForLocale(lang) {
+		lang = (lang || "").toLowerCase();
+		return (lang === "en-us" || lang === "en-ca") ? "us" : "uk";
+	}
+	function floorPref() {
+		return prefs.floors || floorPrefForLocale(navigator.language);
+	}
 	function floorText(usNum, conv) {
 		var n = parseInt(usNum, 10);
 		if (isNaN(n)) return "floor " + (usNum || "");
@@ -443,7 +454,7 @@
 			} else if (name === "coins") {
 				out = (args[0] || "") + " coins";
 			} else if (name === "floornumber") {
-				out = floorText(args[0], prefs.floors || "uk");
+				out = floorText(args[0], floorPref());
 			} else if (name === "sq" || name === "!") {
 				out = "|";
 			} else if (name === "npc map" || name === "object map" || name === "map" || name === "maplink") {
@@ -2406,7 +2417,7 @@
 		});
 
 		var floorMode = document.getElementById("floor-mode");
-		floorMode.value = prefs.floors || "uk";
+		floorMode.value = floorPref();
 		floorMode.addEventListener("change", function () {
 			prefs.floors = floorMode.value;
 			store(PREFS_KEY, prefs);
@@ -2619,6 +2630,7 @@
 		locationLockNote: locationLockNote,
 		fetchRuneMetrics: fetchRuneMetrics,
 		floorText: floorText,
+		floorPrefForLocale: floorPrefForLocale,
 		setFloorPref: function (v) { prefs.floors = v; },
 		parseTimelineOrder: parseTimelineOrder,
 		fetchTimelineOrder: fetchTimelineOrder,

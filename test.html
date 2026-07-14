@@ -219,6 +219,9 @@
 		check("floors: us keeps number", fl(2, "us") === "2nd floor" && fl(1, "us") === "1st floor");
 		check("floors: basement", fl(0, "uk") === "basement" && fl(0, "us") === "basement");
 		check("floors: non-numeric passthrough", fl("?", "uk") === "floor ?");
+		var flp = window.__rs3qh.floorPrefForLocale;
+		check("floors: en-US locale defaults US", flp("en-US") === "us" && flp("en-ca") === "us");
+		check("floors: other locales default UK", flp("en-GB") === "uk" && flp("nl-NL") === "uk" && flp("") === "uk");
 		window.__rs3qh.setFloorPref("uk");
 		var gFloor = window.__rs3qh.parseQuickGuide("==S==\n{{Checklist|\n* Go to the {{FloorNumber|2}} and look around.\n}}\n");
 		check("floors: guide renders uk by default", gFloor.sections[0].steps[0].text === "Go to the 1st floor and look around.");
