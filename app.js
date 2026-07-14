@@ -293,6 +293,14 @@
 	function floorPref() {
 		return prefs.floors || floorPrefForLocale(navigator.language);
 	}
+
+	// Themes swap the CSS variable palette via a data attribute; "dark"
+	// (no attribute) is the stylesheet's base.
+	function applyTheme() {
+		var t = prefs.theme || "dark";
+		if (t === "dark") document.documentElement.removeAttribute("data-theme");
+		else document.documentElement.setAttribute("data-theme", t);
+	}
 	function floorText(usNum, conv) {
 		var n = parseInt(usNum, 10);
 		if (isNaN(n)) return "floor " + (usNum || "");
@@ -2392,6 +2400,7 @@
 	}
 
 	function init() {
+		applyTheme();
 		document.getElementById("search").addEventListener("input", renderList);
 		document.getElementById("btn-home").addEventListener("click", goHome);
 
@@ -2431,24 +2440,47 @@
 			loadSortData();
 		});
 
-		// Floor convention pickers live in both views; keep them in step.
-		function setFloorConvention(v) {
-			prefs.floors = v;
-			store(PREFS_KEY, prefs);
-			["floor-mode", "floor-mode-guide"].forEach(function (id) {
-				document.getElementById(id).value = v;
+		// Settings popup: every configurable option in one place, opened
+		// from the gear button in either view.
+		var settingsPopup = document.getElementById("settings-popup");
+		["btn-settings-home", "btn-settings-guide"].forEach(function (id) {
+			document.getElementById(id).addEventListener("click", function () {
+				settingsPopup.classList.remove("hidden");
 			});
+		});
+		document.getElementById("settings-close").addEventListener("click", function () {
+			settingsPopup.classList.add("hidden");
+		});
+		settingsPopup.addEventListener("click", function (e) {
+			if (e.target === this) this.classList.add("hidden");
+		});
+
+		var floorMode = document.getElementById("floor-mode");
+		floorMode.value = floorPref();
+		floorMode.addEventListener("change", function () {
+			prefs.floors = floorMode.value;
+			store(PREFS_KEY, prefs);
 			// Cached guides were parsed with the old wording — drop them so
 			// the next open re-parses, and re-open the current one live.
 			try { localStorage.removeItem(GUIDE_CACHE_KEY); } catch (e) { /* ignore */ }
 			if (currentQuestTitle && !document.getElementById("view-guide").classList.contains("hidden")) {
 				openQuest(currentQuestTitle);
 			}
-		}
-		["floor-mode", "floor-mode-guide"].forEach(function (id) {
-			var sel = document.getElementById(id);
-			sel.value = floorPref();
-			sel.addEventListener("change", function () { setFloorConvention(sel.value); });
+		});
+
+		var themeMode = document.getElementById("theme-mode");
+		themeMode.value = prefs.theme || "dark";
+		themeMode.addEventListener("change", function () {
+			prefs.theme = themeMode.value;
+			store(PREFS_KEY, prefs);
+			applyTheme();
+		});
+
+		document.getElementById("btn-clear-cache").addEventListener("click", function () {
+			[INDEX_CACHE_KEY, GUIDE_CACHE_KEY, ORDER_CACHE_KEY, TIMELINE_CACHE_KEY].forEach(function (k) {
+				try { localStorage.removeItem(k); } catch (e) { /* ignore */ }
+			});
+			location.reload();
 		});
 
 		document.getElementById("btn-next").addEventListener("click", function () {

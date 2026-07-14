@@ -12,6 +12,44 @@
 	--green: #7fbf4d;
 	--red: #c0564a;
 	--chat: #6fa8dc;
+	--chip-bg: #223247;
+	--chip-border: #33507a;
+	--info-bg: #3a3325;
+	--info-border: #6a5a2a;
+	--map-chip-bg: #2a3a2a;
+	--map-chip-border: #3f5f33;
+	--primary-bg: #3a5a2a;
+	--active-bg: #4a3a1a;
+	--img-bg: #111;
+}
+
+:root[data-theme="light"] {
+	--bg: #e7dfc9;
+	--panel: #f4eeda;
+	--panel-2: #e0d6ba;
+	--border: #a4936a;
+	--text: #2c2618;
+	--muted: #6f6449;
+	--gold: #8a6a15;
+	--green: #3c7a1a;
+	--red: #a83326;
+	--chat: #1f5a9e;
+	--chip-bg: #dbe6f4;
+	--chip-border: #90aed4;
+	--info-bg: #efe4c0;
+	--info-border: #b09a55;
+	--map-chip-bg: #d8e8d0;
+	--map-chip-border: #7fa868;
+	--primary-bg: #bcd9a5;
+	--active-bg: #ead9a8;
+	--img-bg: #fff;
+}
+
+:root[data-theme="black"] {
+	--bg: #000;
+	--panel: #101010;
+	--panel-2: #1c1c1c;
+	--border: #3c3c3c;
 }
 
 html, body { height: 100%; }
@@ -30,7 +68,7 @@ a { color: var(--gold); }
 .hidden { display: none !important; }
 
 .banner {
-	background: #4a3a1a;
+	background: var(--active-bg);
 	color: var(--gold);
 	padding: 6px 10px;
 	font-size: 12px;
@@ -159,8 +197,8 @@ header {
 	border: 1px solid var(--border);
 }
 
-.quest-status.done { color: var(--green); border-color: #3f5f33; }
-.quest-status.started { color: var(--gold); border-color: #6a5a2a; }
+.quest-status.done { color: var(--green); border-color: var(--map-chip-border); }
+.quest-status.started { color: var(--gold); border-color: var(--info-border); }
 
 .quest-row {
 	display: flex;
@@ -372,9 +410,9 @@ main {
 
 .chip {
 	display: inline;
-	background: #223247;
+	background: var(--chip-bg);
 	color: var(--chat);
-	border: 1px solid #33507a;
+	border: 1px solid var(--chip-border);
 	border-radius: 3px;
 	font-size: 11px;
 	padding: 0 5px;
@@ -399,13 +437,13 @@ main {
 	margin: 0 0 6px 8px;
 	border: 1px solid var(--border);
 	border-radius: 4px;
-	background: #111;
+	background: var(--img-bg);
 }
 
 .chip-info {
-	background: #3a3325;
+	background: var(--info-bg);
 	color: var(--gold);
-	border-color: #6a5a2a;
+	border-color: var(--info-border);
 	text-decoration: none;
 	cursor: pointer;
 	padding: 0 6px;
@@ -415,7 +453,12 @@ main {
 
 .item-popup {
 	position: fixed;
-	inset: 0;
+	/* long-hand instead of inset: 0 — Alt1's embedded Chromium is older
+	   than desktop browsers */
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
 	background: rgba(0, 0, 0, 0.55);
 	display: flex;
 	align-items: center;
@@ -450,10 +493,51 @@ main {
 #item-popup-body p { margin: 4px 0; line-height: 1.5; }
 #item-popup-body ul { margin: 2px 0 6px 16px; }
 
+#settings-title { flex: 1; font-weight: 600; color: var(--gold); }
+#settings-close { padding: 2px 8px; font-size: 11px; }
+#btn-settings-home,
+#btn-settings-guide {
+	font-family: "Segoe UI Symbol", "Segoe UI", Arial, sans-serif;
+	font-size: 14px;
+	line-height: 1;
+	padding: 5px 9px;
+}
+
+.settings-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 7px 0;
+	border-bottom: 1px dashed var(--border);
+}
+
+.settings-row label { color: var(--text); }
+
+.settings-row select,
+.settings-row button {
+	background: var(--panel-2);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	padding: 4px 6px;
+	font-size: 12px;
+}
+
+.settings-row select:hover,
+.settings-row button:hover { border-color: var(--gold); cursor: pointer; }
+
+.settings-note {
+	font-size: 11px;
+	color: var(--muted);
+	margin-top: 8px;
+	line-height: 1.5;
+}
+
 .chip-map {
-	background: #2a3a2a;
+	background: var(--map-chip-bg);
 	color: var(--green);
-	border-color: #3f5f33;
+	border-color: var(--map-chip-border);
 	text-decoration: none;
 	cursor: pointer;
 }
@@ -470,7 +554,7 @@ main {
 	border: 1px solid var(--border);
 	border-radius: 4px;
 	cursor: zoom-in;
-	background: #111;
+	background: var(--img-bg);
 }
 
 .guide-img.expanded img { cursor: zoom-out; }
@@ -556,7 +640,7 @@ main {
 #map-frame {
 	flex: 1;
 	border: 0;
-	background: #111;
+	background: var(--img-bg);
 }
 
 .free-pos {
@@ -641,13 +725,13 @@ footer select {
 }
 
 button.primary {
-	background: #3a5a2a;
+	background: var(--primary-bg);
 	border-color: var(--green);
 	flex: 1;
 }
 
 button.active {
-	background: #4a3a1a;
+	background: var(--active-bg);
 	border-color: var(--gold);
 	color: var(--gold);
 }

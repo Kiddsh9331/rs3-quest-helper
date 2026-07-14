@@ -16,6 +16,7 @@
 	<div id="view-home" class="view">
 		<header>
 			<input id="search" type="search" placeholder="Search quests&hellip;" autocomplete="off">
+			<button id="btn-settings-home" title="Settings">&#9881;</button>
 		</header>
 		<div class="home-tools">
 			<input id="rsn" type="text" placeholder="RuneScape name" autocomplete="off" title="Your in-game name, used to fetch quest completion from RuneMetrics">
@@ -25,10 +26,6 @@
 				<option value="az">A&ndash;Z</option>
 				<option value="optimal">Optimal order</option>
 				<option value="timeline">Timeline</option>
-			</select>
-			<select id="floor-mode" title="Floor numbering in guides: UK counts the ground floor separately, US calls it the 1st floor">
-				<option value="uk">UK floors</option>
-				<option value="us">US floors</option>
 			</select>
 		</div>
 		<div id="sync-status" class="status hidden"></div>
@@ -105,12 +102,38 @@
 			</select>
 			<button id="btn-assist" title="Highlight matching dialogue options in game and watch the chatbox">Assist: off</button>
 			<button id="btn-auto" title="Automatically tick dialogue steps when the conversation ends (needs Assist)">Auto: off</button>
-			<select id="floor-mode-guide" title="Floor numbering in guides: UK counts the ground floor separately, US calls it the 1st floor">
-				<option value="uk">UK floors</option>
-				<option value="us">US floors</option>
-			</select>
+			<button id="btn-settings-guide" title="Settings">&#9881;</button>
 			<button id="btn-reset" title="Clear all progress for this quest">Reset</button>
 		</footer>
+	</div>
+
+	<div id="settings-popup" class="item-popup hidden">
+		<div class="item-popup-card">
+			<div class="item-popup-head">
+				<span id="settings-title">Settings</span>
+				<button id="settings-close" title="Close">&#10005;</button>
+			</div>
+			<div class="settings-row">
+				<label for="floor-mode" title="UK counts the ground floor separately; US calls it the 1st floor">Floor numbering</label>
+				<select id="floor-mode">
+					<option value="uk">UK (ground, 1st, 2nd&hellip;)</option>
+					<option value="us">US (1st, 2nd, 3rd&hellip;)</option>
+				</select>
+			</div>
+			<div class="settings-row">
+				<label for="theme-mode">Theme</label>
+				<select id="theme-mode">
+					<option value="dark">RS dark</option>
+					<option value="light">Parchment light</option>
+					<option value="black">Pure black</option>
+				</select>
+			</div>
+			<div class="settings-row">
+				<label title="Quest list, guides and sort orders are cached for 7 days">Wiki data cache</label>
+				<button id="btn-clear-cache">Clear &amp; reload</button>
+			</div>
+			<div class="settings-note">Guides and quest lists refresh from the wiki automatically every 7 days &mdash; clear the cache to force it now. Your quest progress and settings are kept.</div>
+		</div>
 	</div>
 
 	<div id="item-popup" class="item-popup hidden">
