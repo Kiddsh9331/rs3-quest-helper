@@ -2176,6 +2176,23 @@
 		});
 	}
 
+	// Startup sync: refresh quest completion for the saved name without
+	// any clicking. Best-effort — on failure keep the cached statuses and
+	// stay quiet instead of popping the manual-import panel (the Sync
+	// button still offers that path).
+	function autoSyncRuneMetrics() {
+		var name = (prefs.rsn || "").trim();
+		if (!name) return;
+		setStatus("sync-status", "Syncing quest statuses for " + name + "…");
+		fetchRuneMetrics(name, false, function (statuses) {
+			applyRmStatuses(statuses, name, "Auto-synced");
+		}, function () {
+			setStatus("sync-status", rmStatuses
+				? "Auto-sync failed — showing the last synced quest statuses."
+				: "Auto-sync failed — click Sync to retry or import manually.");
+		});
+	}
+
 	function loadOptimalOrder() {
 		if (optimalRank) { renderList(); return; }
 		setStatus("sync-status", "Loading optimal quest order from the wiki…");
@@ -2379,11 +2396,13 @@
 		fetchQuestIndex(function (list) {
 			questIndex = list;
 			setStatus("index-status", "");
-			// Restore cached RuneMetrics statuses and preferred sort.
+			// Restore cached RuneMetrics statuses and preferred sort, then
+			// refresh the statuses automatically for the saved name.
 			var rmCached = load(RM_CACHE_KEY, null);
 			if (rmCached && rmCached.name === prefs.rsn) rmStatuses = rmCached.statuses;
 			if (prefs.sort === "optimal") loadOptimalOrder();
 			renderList();
+			autoSyncRuneMetrics();
 
 			// Deep link (?quest=Title) — also used for automated testing.
 			var qp = /[?&]quest=([^&]+)/.exec(location.search);
