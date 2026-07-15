@@ -2925,21 +2925,50 @@
 			}
 		});
 
-		document.getElementById("btn-reset").addEventListener("click", function () {
-			if (!guide || !confirm("Clear all progress for " + guide.name + "?")) return;
-			progress[guide.title] = { done: {} };
+		// Two-click confirm instead of confirm(): Alt1's embedded browser
+		// blocks native dialogs, so confirm() returned false and Reset
+		// silently did nothing. First click arms; second within 3s clears.
+		var resetBtn = document.getElementById("btn-reset");
+		var resetArmed = false, resetTimer = null;
+		function disarmReset() {
+			resetArmed = false;
+			resetBtn.textContent = "Reset";
+			resetBtn.classList.remove("active");
+			if (resetTimer) { clearTimeout(resetTimer); resetTimer = null; }
+		}
+		resetBtn.addEventListener("click", function () {
+			if (!guide) return;
+			if (!resetArmed) {
+				resetArmed = true;
+				resetBtn.textContent = "Reset? Click again";
+				resetBtn.classList.add("active");
+				resetTimer = setTimeout(disarmReset, 3000);
+				return;
+			}
+			disarmReset();
+			progress[guide.title] = { done: {}, items: {} };
 			store(PROGRESS_KEY, progress);
 			renderSteps();
+			renderMeta();
 			if (overlayTimer) paintOverlay();
+			setStatus("guide-status", "Progress cleared for " + guide.name + ".");
+			setTimeout(function () { setStatus("guide-status", ""); }, 2500);
 		});
+
+		// Native alert() is blocked in Alt1's browser too, so surface these
+		// in the guide status line where the user can actually read them.
+		function notify(msg) {
+			setStatus("guide-status", msg);
+			setTimeout(function () { setStatus("guide-status", ""); }, 5000);
+		}
 
 		document.getElementById("btn-overlay").addEventListener("click", function () {
 			if (!inAlt1()) {
-				alert("The overlay only works inside Alt1.");
+				notify("The overlay only works inside Alt1.");
 				return;
 			}
 			if (!alt1.permissionOverlay) {
-				alert("Overlay permission is not granted. Re-add the app or enable it in Alt1 settings.");
+				notify("Overlay permission is not granted. Re-add the app or enable it in Alt1 settings.");
 				return;
 			}
 			setOverlay(!overlayTimer);
@@ -2947,11 +2976,11 @@
 
 		document.getElementById("btn-assist").addEventListener("click", function () {
 			if (!inAlt1()) {
-				alert("Assist only works inside Alt1.");
+				notify("Assist only works inside Alt1.");
 				return;
 			}
 			if (!assistAvailable()) {
-				alert("Assist needs the pixel and overlay permissions. Re-add the app (the permission request changed) or enable them in Alt1's app settings.");
+				notify("Assist needs the pixel and overlay permissions. Re-add the app (the permission request changed) or enable them in Alt1's app settings.");
 				return;
 			}
 			setAssist(!assistTimer);
@@ -2964,8 +2993,8 @@
 		}
 		autoBtn.addEventListener("click", function () {
 			if (!autoAdvance) {
-				if (!inAlt1()) { alert("Auto-tick only works inside Alt1."); return; }
-				if (!assistAvailable()) { alert("Auto-tick needs the pixel and overlay permissions."); return; }
+				if (!inAlt1()) { notify("Auto-tick only works inside Alt1."); return; }
+				if (!assistAvailable()) { notify("Auto-tick needs the pixel and overlay permissions."); return; }
 				autoAdvance = true;
 				if (!assistTimer) setAssist(true);
 			} else {
