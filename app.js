@@ -64,6 +64,52 @@
 		return p;
 	}
 
+	// ---------- progress export / import (cross-browser sync) ----------
+	// A whole-progress code the user copies to another browser/device (or
+	// shares) and pastes in. Covers every quest's ticked steps and items —
+	// the pathway guide included, since its progress lives here too.
+	var PROGRESS_CODE_PREFIX = "RS3QH1:";
+
+	function encodeProgress(obj) {
+		try {
+			return PROGRESS_CODE_PREFIX + btoa(unescape(encodeURIComponent(JSON.stringify(obj || {}))));
+		} catch (e) { return ""; }
+	}
+
+	function decodeProgress(code) {
+		if (typeof code !== "string") return null;
+		code = code.trim();
+		if (code.indexOf(PROGRESS_CODE_PREFIX) !== 0) return null;
+		try {
+			var obj = JSON.parse(decodeURIComponent(escape(atob(code.slice(PROGRESS_CODE_PREFIX.length)))));
+			return (obj && typeof obj === "object") ? obj : null;
+		} catch (e) { return null; }
+	}
+
+	// Union-merge incoming progress into target: adds ticked steps/items,
+	// never un-ticks (safe to import onto an account that's ahead in places).
+	// Returns the count of quests that gained something.
+	function mergeProgress(target, incoming) {
+		var changed = 0;
+		Object.keys(incoming || {}).forEach(function (title) {
+			var inc = incoming[title];
+			if (!inc || typeof inc !== "object") return;
+			var cur = target[title] || (target[title] = { done: {}, items: {} });
+			if (!cur.done) cur.done = {};
+			if (!cur.items) cur.items = {};
+			var touched = false;
+			["done", "items"].forEach(function (field) {
+				var m = inc[field];
+				if (!m || typeof m !== "object") return;
+				Object.keys(m).forEach(function (key) {
+					if (m[key] && !cur[field][key]) { cur[field][key] = true; touched = true; }
+				});
+			});
+			if (touched) changed++;
+		});
+		return changed;
+	}
+
 	function itemChecked(name) {
 		return !!questProgress().items[name.toLowerCase()];
 	}
@@ -2970,6 +3016,34 @@
 			location.reload();
 		});
 
+		var progressCode = document.getElementById("progress-code");
+		var progressSyncStatus = document.getElementById("progress-sync-status");
+		document.getElementById("btn-progress-export").addEventListener("click", function () {
+			var questCount = Object.keys(progress).length;
+			progressCode.value = encodeProgress(progress);
+			progressCode.focus();
+			progressCode.select();
+			try { document.execCommand("copy"); } catch (e) { /* selection is enough */ }
+			progressSyncStatus.textContent = "Code for " + questCount + " quest" + (questCount === 1 ? "" : "s") +
+				" copied — paste it into the app on your other browser or device.";
+		});
+		document.getElementById("btn-progress-import").addEventListener("click", function () {
+			var decoded = decodeProgress(progressCode.value);
+			if (!decoded) {
+				progressSyncStatus.textContent = "That does not look like a progress code — it should start with \"" + PROGRESS_CODE_PREFIX + "\".";
+				return;
+			}
+			var changed = mergeProgress(progress, decoded);
+			store(PROGRESS_KEY, progress);
+			progressCode.value = "";
+			renderList();
+			if (guide) renderSteps();
+			if (overlayTimer) paintOverlay();
+			progressSyncStatus.textContent = changed > 0
+				? "Imported — progress merged for " + changed + " quest" + (changed === 1 ? "" : "s") + "."
+				: "Imported — your progress already covered everything in that code.";
+		});
+
 		function advanceStep(fromHotkey) {
 			if (!guide || document.getElementById("view-guide").classList.contains("hidden")) return;
 			var cur = currentStep();
@@ -3226,6 +3300,9 @@
 		requiredConversations: requiredConversations,
 		normKeybind: normKeybind,
 		keyLabel: keyLabel,
+		encodeProgress: encodeProgress,
+		decodeProgress: decodeProgress,
+		mergeProgress: mergeProgress,
 		assistTargets: assistTargets,
 		autoTickBlockedBySubs: autoTickBlockedBySubs,
 		normName: normName,

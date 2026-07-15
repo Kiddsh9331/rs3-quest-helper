@@ -273,6 +273,34 @@
 		check("number chain: never counts toward required conversations",
 			window.__rs3qh.countMatchedCandidates("1 / 1 / 1 / 4", chainOpts) === 0);
 
+		// Progress export/import (cross-browser sync): round-trips, unions on
+		// merge, never un-ticks, rejects junk.
+		var enc = window.__rs3qh.encodeProgress, dec = window.__rs3qh.decodeProgress, mrg = window.__rs3qh.mergeProgress;
+		var prog = { "Cook's Assistant/Quick guide": { done: { "0:0": true }, items: { "pot of flour": true } } };
+		var code = enc(prog);
+		check("progress: code has prefix", code.indexOf("RS3QH1:") === 0);
+		check("progress: round-trips", JSON.stringify(dec(code)) === JSON.stringify(prog));
+		check("progress: rejects non-code", dec("hello world") === null && dec("") === null && dec(null) === null);
+		check("progress: rejects corrupt base64", dec("RS3QH1:@@notbase64@@") === null);
+		// Merge unions and reports changed quests.
+		var target = { "A/Quick guide": { done: { "0:0": true }, items: {} } };
+		var incoming = {
+			"A/Quick guide": { done: { "1:0": true }, items: { rope: true } },
+			"B/Quick guide": { done: { "0:0": true }, items: {} }
+		};
+		var n = mrg(target, incoming);
+		check("progress: merge reports changed quests", n === 2);
+		check("progress: merge unions done", target["A/Quick guide"].done["0:0"] && target["A/Quick guide"].done["1:0"]);
+		check("progress: merge adds items and new quests", target["A/Quick guide"].items.rope && !!target["B/Quick guide"]);
+		// Merge never un-ticks (importing an empty quest changes nothing).
+		var before = JSON.stringify(target);
+		var n2 = mrg(target, { "A/Quick guide": { done: {}, items: {} } });
+		check("progress: merge never un-ticks", n2 === 0 && JSON.stringify(target) === before);
+		// Full real round-trip through encode->decode->merge.
+		var t2 = {};
+		mrg(t2, dec(enc(prog)));
+		check("progress: encode->decode->merge restores", t2["Cook's Assistant/Quick guide"].done["0:0"] === true);
+
 		// Keybind tokens: single letters case-fold, named keys stay verbatim,
 		// labels are human-readable.
 		var nk = window.__rs3qh.normKeybind, kl = window.__rs3qh.keyLabel;

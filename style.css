@@ -564,6 +564,23 @@ main {
 	line-height: 1.5;
 }
 
+.settings-row-end { justify-content: flex-end; }
+
+.settings-code {
+	width: 100%;
+	margin-top: 8px;
+	background: var(--panel-2);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	font: 11px monospace;
+	padding: 5px;
+	resize: vertical;
+	word-break: break-all;
+}
+
+.settings-code:focus { outline: none; border-color: var(--gold); }
+
 .chip-map {
 	background: var(--map-chip-bg);
 	color: var(--green);

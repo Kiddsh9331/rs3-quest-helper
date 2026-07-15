@@ -143,6 +143,16 @@
 				<button id="btn-clear-cache">Clear &amp; reload</button>
 			</div>
 			<div class="settings-note">Guides and quest lists refresh from the wiki automatically every 7 days &mdash; clear the cache to force it now. Your quest progress and settings are kept.</div>
+
+			<div class="settings-row">
+				<label title="Move your ticked steps and items to another browser or device">Progress sync</label>
+				<button id="btn-progress-export" title="Create a code with all your ticked steps and items">Export code</button>
+			</div>
+			<textarea id="progress-code" class="settings-code" rows="2" placeholder="Click Export to get your code, or paste a code here and click Import" autocomplete="off" spellcheck="false"></textarea>
+			<div class="settings-row settings-row-end">
+				<button id="btn-progress-import">Import</button>
+			</div>
+			<div id="progress-sync-status" class="settings-note">Export copies a code for all your quest progress. On another browser or device, paste it here and Import &mdash; it adds the ticked steps, it never un-ticks anything.</div>
 		</div>
 	</div>
 
