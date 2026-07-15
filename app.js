@@ -1204,6 +1204,23 @@
 			typeof A1lib !== "undefined" && typeof Dialog !== "undefined";
 	}
 
+	// Store a KeyboardEvent.key as a stable token: single letters lower-cased
+	// so matching is case-insensitive; named keys (Enter, ArrowRight, " ")
+	// kept verbatim. Pure — used by the settings capture and the handler.
+	function normKeybind(key) {
+		if (!key) return "";
+		return key.length === 1 ? key.toLowerCase() : key;
+	}
+
+	// Human-readable label for a stored keybind token.
+	function keyLabel(key) {
+		if (!key) return "—";
+		var named = { " ": "Space", Enter: "Enter", ArrowRight: "→", ArrowLeft: "←",
+			ArrowUp: "↑", ArrowDown: "↓", Tab: "Tab", Backspace: "Backspace" };
+		if (named[key]) return named[key];
+		return key.length === 1 ? key.toUpperCase() : key;
+	}
+
 	// Normalise option text for comparison: lowercase, no punctuation.
 	function normOpt(s) {
 		return s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -2740,12 +2757,35 @@
 		if (inAlt1() && typeof A1lib.on === "function") {
 			A1lib.on("alt1pressed", advanceStep);
 		}
-		// And a plain key for when the app window itself has focus.
+
+		// In-app "Done, next" key (configurable in Settings). Matches on
+		// e.key case-insensitively; skips typing into form fields.
+		var keybindBtn = document.getElementById("btn-keybind");
+		var capturingKey = false;
+		function setKeybindLabel() {
+			keybindBtn.textContent = capturingKey ? "Press a key…" : keyLabel(prefs.advanceKey || "n");
+		}
+		setKeybindLabel();
+		keybindBtn.addEventListener("click", function () {
+			capturingKey = true;
+			setKeybindLabel();
+		});
 		window.addEventListener("keydown", function (e) {
-			if (e.key !== "n" && e.key !== "N") return;
+			if (capturingKey) {
+				// Ignore lone modifier presses; wait for a real key.
+				if (["Shift", "Control", "Alt", "Meta"].indexOf(e.key) !== -1) return;
+				e.preventDefault();
+				capturingKey = false;
+				if (e.key !== "Escape") {
+					prefs.advanceKey = normKeybind(e.key);
+					store(PREFS_KEY, prefs);
+				}
+				setKeybindLabel();
+				return;
+			}
 			var tag = ((e.target && e.target.tagName) || "").toLowerCase();
 			if (tag === "input" || tag === "textarea" || tag === "select") return;
-			advanceStep();
+			if (normKeybind(e.key) === (prefs.advanceKey || "n")) advanceStep();
 		});
 
 		document.getElementById("btn-back").addEventListener("click", function () {
@@ -2921,6 +2961,8 @@
 		convoObserve: convoObserve,
 		countMatchedCandidates: countMatchedCandidates,
 		requiredConversations: requiredConversations,
+		normKeybind: normKeybind,
+		keyLabel: keyLabel,
 		assistTargets: assistTargets,
 		normName: normName,
 		parseRmPayload: parseRmPayload,

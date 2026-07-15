@@ -273,6 +273,15 @@
 		check("number chain: never counts toward required conversations",
 			window.__rs3qh.countMatchedCandidates("1 / 1 / 1 / 4", chainOpts) === 0);
 
+		// Keybind tokens: single letters case-fold, named keys stay verbatim,
+		// labels are human-readable.
+		var nk = window.__rs3qh.normKeybind, kl = window.__rs3qh.keyLabel;
+		check("keybind: letter lower-cases", nk("N") === "n" && nk("q") === "q");
+		check("keybind: named key verbatim", nk("Enter") === "Enter" && nk("ArrowRight") === "ArrowRight");
+		check("keybind: label upper-cases letter", kl("n") === "N");
+		check("keybind: label names space/arrow", kl(" ") === "Space" && kl("ArrowRight") === "→");
+		check("keybind: N and n match same binding", nk("N") === nk("n"));
+
 		// Dialogue targets: sub-steps outrank the parent, so a conversation
 		// matching a sub ticks the sub — the parent (often ending in "Any")
 		// can no longer claim every conversation and sweep subs done.
