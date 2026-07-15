@@ -24,6 +24,8 @@
 	var ORDER_TTL_MS = 7 * 24 * 3600 * 1000;
 	var TIMELINE_CACHE_KEY = "rs3qh-timeline-v2";
 	var TIMELINE_TTL_MS = 7 * 24 * 3600 * 1000;
+	var FULLIMG_CACHE_KEY = "rs3qh-fullimg-v1";
+	var FULLIMG_TTL_MS = 7 * 24 * 3600 * 1000;
 	var PREFS_KEY = "rs3qh-prefs-v1";
 
 	var questIndex = [];    // [{ title: "X/Quick guide", name: "X" }]
@@ -745,6 +747,70 @@
 		// Drop sections that ended up with no steps and no info.
 		sections = sections.filter(function (s) { return s.steps.length || s.needed.length || s.images.length; });
 		return { sections: sections };
+	}
+
+	// ---------- full-guide image enrichment ----------
+	// Quick guides carry almost no pictures; the full walkthrough pages do
+	// (puzzle solutions, step screenshots). Both are organised under the
+	// same section headings, so we pull the full guide's images and slot
+	// them into the matching quick-guide section — pinned to a specific
+	// step when a caption clearly names it, otherwise shown for the section.
+
+	function normHeading(s) {
+		return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+	}
+
+	// { normalised section heading -> [{file, caption}] } for the useful
+	// images on a full quest page. Chatheads, icons and un-captioned
+	// portraits (caption is just a "60px" size) are dropped.
+	function parseFullGuideImages(wikitext) {
+		var parts = wikitext.split(/^==\s*([^=].*?)\s*==\s*$/m); // [pre, h1, b1, h2, b2, …]
+		var out = {};
+		for (var i = 1; i < parts.length; i += 2) {
+			var head = normHeading(parts[i]);
+			var body = parts[i + 1] || "";
+			var re = /\[\[File:([^\]]+?)\]\]/gi, m;
+			var imgs = [];
+			while ((m = re.exec(body)) !== null) {
+				var seg = m[1].split("|");
+				var file = seg[0].trim();
+				if (/chathead|\bicon\b|\.gif$/i.test(file)) continue;
+				var caption = "";
+				for (var s = 1; s < seg.length; s++) {
+					var p = seg[s].trim();
+					if (/^(thumb|thumbnail|frame|frameless|border|right|left|center|centre|none|baseline|middle|top|bottom|upright[\s\S]*|x?\d+(x\d+)?px|link=[\s\S]*|alt=[\s\S]*|page=[\s\S]*|class=[\s\S]*)$/i.test(p)) continue;
+					caption = p;
+				}
+				if (!caption) continue; // portrait / decorative
+				caption = extractChat(cleanMarkup(resolveTemplates(caption))).text.replace(/\s+/g, " ").trim();
+				if (caption) imgs.push({ file: file, caption: caption });
+			}
+			if (imgs.length) out[head] = (out[head] || []).concat(imgs);
+		}
+		return out;
+	}
+
+	var CAP_STOPWORDS = " the you your are and not for with into what that this will its from his her out back down over near then them into a an of to in on at is it as be by ";
+
+	// Which step in a section a captioned image belongs to, or -1 for none:
+	// the step sharing the most distinctive words with the caption, needing
+	// a solid overlap so descriptive captions don't get pinned to the wrong
+	// step (a weak match falls back to section-level display).
+	function bestStepForCaption(caption, steps) {
+		function words(s) {
+			return (s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/)
+				.filter(function (t) { return t.length > 2 && CAP_STOPWORDS.indexOf(" " + t + " ") === -1; });
+		}
+		var cw = words(caption);
+		if (cw.length < 2) return -1;
+		var bestIdx = -1, bestHits = 0;
+		steps.forEach(function (st, i) {
+			var sw = words(st.text);
+			var hits = 0;
+			cw.forEach(function (t) { if (sw.indexOf(t) !== -1) hits++; });
+			if (hits > bestHits) { bestHits = hits; bestIdx = i; }
+		});
+		return bestHits >= 2 ? bestIdx : -1;
 	}
 
 	// ---------- Efficient Ironman Pathway (special guide) ----------
@@ -2546,10 +2612,75 @@
 			show("details-rec-panel", false);
 			resetOverview();
 			attachQuestDetails(renderQuestDetails);
+			if (title !== PATHWAY_TITLE) attachFullGuideImages(guide.name, title);
 			if (overlayTimer) paintOverlay();
 		}, function (msg) {
 			setStatus("guide-status", msg);
 		});
+	}
+
+	// Fetch the full walkthrough's images and merge them into the open
+	// quick guide by matching section headings (7-day cache). Best-effort:
+	// a failure or a quest whose headings don't line up just leaves the
+	// quick guide as-is.
+	function attachFullGuideImages(name, openedTitle) {
+		function merge(imgMap) {
+			// Guard against the user having navigated away meanwhile.
+			if (!guide || currentQuestTitle !== openedTitle || !Object.keys(imgMap).length) return;
+			var added = false;
+			var have = {};
+			guide.sections.forEach(function (sec) {
+				(sec.images || []).forEach(function (im) { have[im.file] = true; });
+				sec.steps.forEach(function (st) { (st.images || []).forEach(function (im) { have[im.file] = true; }); });
+			});
+			// Pass 1 — matching section headings: pin to a step by caption,
+			// else show for the section.
+			var usedHeading = {};
+			guide.sections.forEach(function (sec) {
+				var key = normHeading(sec.title);
+				var extra = imgMap[key];
+				if (!extra) return;
+				usedHeading[key] = true;
+				extra.forEach(function (im) {
+					if (have[im.file]) return;
+					have[im.file] = true;
+					var si = bestStepForCaption(im.caption, sec.steps);
+					if (si >= 0) sec.steps[si].images = (sec.steps[si].images || []).concat(im);
+					else sec.images = (sec.images || []).concat(im);
+					added = true;
+				});
+			});
+			// Pass 2 — the quick and full guides sometimes name sections
+			// differently (One Piercing Note, Swept Away). For images whose
+			// heading never matched, fall back to the best step ANYWHERE in
+			// the guide by caption overlap; drop the image if nothing fits
+			// (better absent than on the wrong step).
+			var allSteps = [];
+			guide.sections.forEach(function (sec) { sec.steps.forEach(function (st) { allSteps.push(st); }); });
+			Object.keys(imgMap).forEach(function (key) {
+				if (usedHeading[key]) return;
+				imgMap[key].forEach(function (im) {
+					if (have[im.file]) return;
+					var si = bestStepForCaption(im.caption, allSteps);
+					if (si >= 0) {
+						have[im.file] = true;
+						allSteps[si].images = (allSteps[si].images || []).concat(im);
+						added = true;
+					}
+				});
+			});
+			if (added) { renderSteps(); if (overlayTimer) paintOverlay(); }
+		}
+		var cache = load(FULLIMG_CACHE_KEY, {});
+		var hit = cache[name];
+		if (hit && Date.now() - hit.ts < FULLIMG_TTL_MS) { merge(hit.data); return; }
+		wikiGet({ action: "parse", page: name, prop: "wikitext" }, function (data) {
+			var imgs = {};
+			try { imgs = parseFullGuideImages(data.parse.wikitext["*"]); } catch (e) { /* ignore */ }
+			cache[name] = { ts: Date.now(), data: imgs };
+			try { store(FULLIMG_CACHE_KEY, cache); } catch (e) { /* quota */ }
+			merge(imgs);
+		}, function () { /* full guide unavailable — quick guide stands alone */ });
 	}
 
 	function goHome() {
@@ -2989,6 +3120,8 @@
 		locationLockNote: locationLockNote,
 		fetchRuneMetrics: fetchRuneMetrics,
 		parsePathwayGuide: parsePathwayGuide,
+		parseFullGuideImages: parseFullGuideImages,
+		bestStepForCaption: bestStepForCaption,
 		floorText: floorText,
 		floorPrefForLocale: floorPrefForLocale,
 		setFloorPref: function (v) { prefs.floors = v; },

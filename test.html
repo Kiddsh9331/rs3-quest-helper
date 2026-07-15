@@ -405,6 +405,25 @@
 				document.getElementById("results").textContent += "\nLIVE pathway FAILED: " + e.message;
 			});
 
+		// Full-guide image enrichment: pull captioned step screenshots from a
+		// full walkthrough, drop chatheads/portraits, group by section.
+		var fg = window.__rs3qh.parseFullGuideImages(
+			"==Meeting Saradomin==\n[[File:Sir Owen chathead.png|60px]]\n[[File:Start.png|thumb|Saradomin informs you of your mission.]]\n" +
+			"==The crypt==\n[[File:Puzzle icon.png|right]]\n[[File:Tile solution.png|thumb|right|The solution to the puzzle]]\n[[File:Fern.png|Fern using her special attack.]]\n"
+		);
+		check("fullimg: chathead dropped", !fg.meetingsaradomin || fg.meetingsaradomin.every(function (i) { return i.file.indexOf("chathead") === -1; }));
+		check("fullimg: captioned screenshot kept", fg.meetingsaradomin && fg.meetingsaradomin[0].file === "Start.png" && /informs you/.test(fg.meetingsaradomin[0].caption));
+		check("fullimg: icon + size-only dropped, real ones kept", fg.thecrypt && fg.thecrypt.length === 2);
+		check("fullimg: grouped by normalised heading", !!fg.thecrypt && !!fg.meetingsaradomin);
+
+		// Caption-to-step pinning: only a solid word overlap pins an image to
+		// a step; weak matches fall back to section level (-1).
+		var bsc = window.__rs3qh.bestStepForCaption;
+		var capSteps = [{ text: "Talk to Sir Owen in the courtyard." }, { text: "Solve the tile puzzle on the floor." }, { text: "Fight Fern near the altar." }];
+		check("caption pin: strong match pins to step", bsc("The solution to the tile puzzle", capSteps) === 1);
+		check("caption pin: weak/one-word match -> section (-1)", bsc("A dramatic cutscene plays", capSteps) === -1);
+		check("caption pin: short caption -> section (-1)", bsc("Overview", capSteps) === -1);
+
 		// Timeline order: tables in document order, first-cell links ranked,
 		// header rows and duplicates skipped.
 		var tl = window.__rs3qh.parseTimelineOrder(
