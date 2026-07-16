@@ -38,6 +38,7 @@
 	var timelineRank = null; // { normalised quest name: position in the timeline list }
 	var currentQuestTitle = null; // wiki title of the open guide, for reloads
 	var lastScrolledKey = null;   // step the list was last auto-scrolled to
+	var alignDeadline = 0;        // re-align to current step while images settle, until this time
 	var overlayTimer = null;
 
 	// ---------- storage ----------
@@ -2702,6 +2703,38 @@
 		document.getElementById("items-panel").open = true;
 	}
 
+	// Bring the current step to the top of the list (with a little context
+	// above). The formula is relative to the live layout, so calling it again
+	// after the layout changes re-lands on the same spot.
+	function scrollCurrentToTop(main) {
+		var active = main.querySelector(".step.current");
+		if (!active) return;
+		var mTop = main.getBoundingClientRect().top;
+		var aTop = active.getBoundingClientRect().top;
+		main.scrollTop += (aTop - mTop) - 12;
+	}
+
+	// Guide images load AFTER the list is rebuilt (lazy, no reserved height),
+	// so a step sitting below an image is first measured too high and we land
+	// above it. Re-align to the current step as each still-loading image
+	// settles — but only briefly after a completion, so a user scrolling
+	// through the guide later is never yanked back.
+	function realignOnImageLoad(main, curKey) {
+		var imgs = main.querySelectorAll(".guide-img img");
+		Array.prototype.forEach.call(imgs, function (im) {
+			if (im.complete) return;
+			function realign() {
+				im.removeEventListener("load", realign);
+				im.removeEventListener("error", realign);
+				if (lastScrolledKey === curKey && Date.now() <= alignDeadline) {
+					scrollCurrentToTop(main);
+				}
+			}
+			im.addEventListener("load", realign);
+			im.addEventListener("error", realign);
+		});
+	}
+
 	function renderSteps() {
 		var main = document.getElementById("steps");
 		// Clearing innerHTML drops scrollTop to 0, so remember where the user
@@ -2784,16 +2817,16 @@
 			var curKey = stepKey(cur);
 			if (curKey !== lastScrolledKey) {
 				lastScrolledKey = curKey;
-				var active = main.querySelector(".step.current");
-				if (active) {
-					var mTop = main.getBoundingClientRect().top;
-					var aTop = active.getBoundingClientRect().top;
-					main.scrollTop += (aTop - mTop) - 12;
-				}
+				alignDeadline = Date.now() + 2500;
+				scrollCurrentToTop(main);
+				realignOnImageLoad(main, curKey);
 			} else {
 				// Same current step: a sub-tick / item toggle / scan re-rendered
-				// the list. Don't yank the view — keep the user where they were.
+				// the list. Don't yank the view — keep the user where they were,
+				// but keep correcting for images that are still loading if a
+				// completion just happened.
 				main.scrollTop = prevScroll;
+				if (Date.now() <= alignDeadline) realignOnImageLoad(main, curKey);
 			}
 		}
 
