@@ -2704,6 +2704,10 @@
 
 	function renderSteps() {
 		var main = document.getElementById("steps");
+		// Clearing innerHTML drops scrollTop to 0, so remember where the user
+		// was and put them back on re-renders that don't advance the current
+		// step (ticking a sub-step, toggling an item, a background scan).
+		var prevScroll = main.scrollTop;
 		main.innerHTML = "";
 		var cur = currentStep();
 		var doneCount = 0;
@@ -2786,6 +2790,10 @@
 					var aTop = active.getBoundingClientRect().top;
 					main.scrollTop += (aTop - mTop) - 12;
 				}
+			} else {
+				// Same current step: a sub-tick / item toggle / scan re-rendered
+				// the list. Don't yank the view — keep the user where they were.
+				main.scrollTop = prevScroll;
 			}
 		}
 
