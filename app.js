@@ -356,6 +356,17 @@
 		if (t === "dark") document.documentElement.removeAttribute("data-theme");
 		else document.documentElement.setAttribute("data-theme", t);
 	}
+	function opacityPercent(value, fallback) {
+		var n = parseInt(value, 10);
+		return isNaN(n) ? fallback : Math.max(30, Math.min(100, n));
+	}
+	function applyPanelOpacity() {
+		document.documentElement.style.setProperty("--app-alpha",
+			String(opacityPercent(prefs.panelOpacity, 100) / 100));
+	}
+	function overlayOpacity() {
+		return opacityPercent(prefs.overlayOpacity, 86) / 100;
+	}
 	function floorText(usNum, conv) {
 		var n = parseInt(usNum, 10);
 		if (isNaN(n)) return "floor " + (usNum || "");
@@ -1125,7 +1136,7 @@
 		ctx.lineTo(W, H - r); ctx.arcTo(W, H, W - r, H, r);
 		ctx.lineTo(r, H); ctx.arcTo(0, H, 0, H - r, r);
 		ctx.lineTo(0, r); ctx.arcTo(0, 0, r, 0, r);
-		ctx.fillStyle = "rgba(18, 22, 18, 0.86)";
+		ctx.fillStyle = "rgba(18, 22, 18, " + overlayOpacity() + ")";
 		ctx.fill();
 		ctx.strokeStyle = "rgba(231, 193, 90, 0.9)";
 		ctx.lineWidth = 1.5;
@@ -1392,12 +1403,12 @@
 	// advances when the visible options change while the dialogue stays
 	// open, resets when the conversation ends or the step changes. Drives
 	// stepping through bare-number chains like "1 / 1 / 1 / 4".
-	var optScreen = { key: null, sig: null, idx: 0, gone: 0, nextCand: {}, matchedCand: -1, matchedTarget: null };
+	var optScreen = { key: null, sig: null, idx: 0, gone: 0, optionsGone: 0, nextCand: {}, matchedCand: -1, matchedTarget: null };
 	function screenIndexFor(key, opts) {
 		var sig = opts.map(function (o) { return o.text || ""; }).join("|");
 		if (optScreen.key !== key) {
 			optScreen.key = key; optScreen.sig = sig; optScreen.idx = 0;
-			optScreen.nextCand = {}; optScreen.matchedCand = -1; optScreen.matchedTarget = null;
+			optScreen.optionsGone = 0; optScreen.nextCand = {}; optScreen.matchedCand = -1; optScreen.matchedTarget = null;
 		} else if (optScreen.sig !== sig) {
 			// A matched option on the previous screen was selected. Continue
 			// from the following guide candidate, even if this screen is a
@@ -1411,7 +1422,24 @@
 			optScreen.sig = sig; optScreen.idx++;
 		}
 		optScreen.gone = 0;
+		optScreen.optionsGone = 0;
 		return optScreen.idx;
+	}
+	// A dialogue response between option screens is evidence that the last
+	// highlighted option was chosen, even when the next option menu has the
+	// exact same text. Hunt for Red Raktuber repeats its dance-answer menu;
+	// without this transition the first answer stays highlighted forever.
+	function screenIndexNoOptions() {
+		if (optScreen.key === null) return;
+		optScreen.optionsGone++;
+		if (optScreen.optionsGone < 2) return;
+		if (optScreen.matchedTarget && optScreen.matchedCand >= 0) {
+			optScreen.nextCand[optScreen.matchedTarget] = optScreen.matchedCand + 1;
+		}
+		optScreen.matchedCand = -1;
+		optScreen.matchedTarget = null;
+		// Force the returning menu through the normal screen-change path.
+		optScreen.sig = null;
 	}
 	function screenIndexGone() {
 		if (optScreen.key === null) return;
@@ -1420,6 +1448,7 @@
 			optScreen.key = null;
 			optScreen.sig = null;
 			optScreen.idx = 0;
+			optScreen.optionsGone = 0;
 			optScreen.nextCand = {};
 			optScreen.matchedCand = -1;
 			optScreen.matchedTarget = null;
@@ -1433,6 +1462,47 @@
 		return (step.subs || []).some(function (sub, k) { return sub.chat && !subDone(k); });
 	}
 
+	// Extract the named person from the guide's instruction. This is only a
+	// safety gate for dialogue matching and Auto mode: a readable, conflicting
+	// dialogue title must not be accepted as this step's conversation.
+	function npcNamesForText(text) {
+		var names = [];
+		var patterns = [
+			/(?:talk|speak)\s+to\s+(?:the\s+)?(.+?)(?=\s+(?:in|on|at|near|next to|east|west|north|south|outside|inside|by)\b|[,.]|$)/i,
+			/return\s+to\s+(?:the\s+)?(.+?)(?=[,.]|$)/i,
+			/give\s+.+?\s+to\s+(?:the\s+)?(.+?)(?=\s+(?:in|on|at|near|next to|east|west|north|south|outside|inside|by)\b|[,.]|$)/i
+		];
+		patterns.forEach(function (re) {
+			var m = re.exec(text || "");
+			if (!m) return;
+			var name = m[1].replace(/\s+/g, " ").trim();
+			// Generic instructions cannot identify a particular NPC.
+			if (!name || /^(any|a|one of|some)\b/i.test(name)) return;
+			if (names.indexOf(name) === -1) names.push(name);
+		});
+		return names;
+	}
+
+	function normNpcName(name) {
+		return (name || "").toLowerCase()
+			.replace(/^(the\s+)?/, "")
+			.replace(/\b(?:king|captain|lieutenant)\s+/g, "")
+			.replace(/[^a-z0-9 ]+/g, " ")
+			.replace(/\s+/g, " ").trim();
+	}
+
+	function dialogTitleConflicts(target, title) {
+		var names = (target && target.npcNames) || [];
+		var got = normNpcName(title);
+		// DialogReader returns "choose an option" on some skins; that is not
+		// an NPC identity, so preserve Auto's normal behaviour in that case.
+		if (!names.length || !got || /choose|option/.test(got)) return false;
+		return !names.some(function (name) {
+			var want = normNpcName(name);
+			return want && (want === got || want.indexOf(got) !== -1 || got.indexOf(want) !== -1);
+		});
+	}
+
 	// Dialogue targets for a step, sub-steps FIRST: a conversation that
 	// matches a sub belongs to that sub. The parent's chat often ends in
 	// "Any", which would otherwise claim every conversation as parent
@@ -1441,10 +1511,12 @@
 		var targets = [];
 		(step.subs || []).forEach(function (sub, k) {
 			if (sub.chat && !subDone(k)) {
-				targets.push({ chat: sub.chat, subIndex: k, label: sub.text, optionKey: "sub:" + k });
+				targets.push({ chat: sub.chat, subIndex: k, label: sub.text, optionKey: "sub:" + k,
+					npcNames: npcNamesForText(sub.text) });
 			}
 		});
-		if (step.chat) targets.push({ chat: step.chat, subIndex: null, label: step.text, optionKey: "parent" });
+		if (step.chat) targets.push({ chat: step.chat, subIndex: null, label: step.text, optionKey: "parent",
+			npcNames: npcNamesForText(step.text) });
 		return targets;
 	}
 
@@ -1851,6 +1923,9 @@
 		var changed = false;
 		flatSteps.forEach(function (s) {
 			if (!isDone(s)) { questProgress().done[stepKey(s)] = true; changed = true; }
+			(s.subs || []).forEach(function (_, k) {
+				if (!isSubDone(s, k)) { questProgress().done[subKey(s, k)] = true; changed = true; }
+			});
 		});
 		if (changed) {
 			store(PROGRESS_KEY, progress);
@@ -1914,6 +1989,10 @@
 				if (dlg && dlg.opts && dlg.opts.length) {
 					var scrIdx = screenIndexFor(stepKey(step), dlg.opts);
 					targets.forEach(function (t) {
+						// Shared prompts (notably the Merchant's trial) occur with
+						// several NPCs. A readable, different speaker is not proof
+						// that this particular guide step was completed.
+						if (dialogTitleConflicts(t, dlg.title)) return;
 						var m = matchOptions(t.chat, dlg.opts, scrIdx, optScreen.nextCand[t.optionKey] || 0);
 						if (m.length && !matchedTarget) matchedTarget = t;
 						m.forEach(function (o) {
@@ -1925,6 +2004,11 @@
 							optScreen.nextCand[matchedTarget.optionKey] || 0);
 						optScreen.matchedTarget = matchedTarget.optionKey;
 					}
+				} else if (dlg && dlg.text) {
+					// A selected answer normally opens a response screen before
+					// returning to its options. Count that transition even if the
+					// returning menu is byte-for-byte identical (Red Raktuber).
+					screenIndexNoOptions();
 				}
 			}
 
@@ -2957,6 +3041,14 @@
 		overviewButtonLabel();
 	}
 
+	function applyOverviewVisibility() {
+		var hidden = !!prefs.overviewHidden;
+		show("quest-meta", !hidden);
+		var btn = document.getElementById("btn-overview-visibility");
+		btn.textContent = hidden ? "Show overview" : "Hide overview";
+		btn.classList.toggle("active", hidden);
+	}
+
 	function renderQuestDetails() {
 		var d = (guide && guide.details) || { items: [], recommended: [] };
 		var itemsUl = document.getElementById("details-items");
@@ -3019,6 +3111,7 @@
 			show("details-items-panel", false);
 			show("details-rec-panel", false);
 			resetOverview();
+			applyOverviewVisibility();
 			attachQuestDetails(renderQuestDetails);
 			if (title !== PATHWAY_TITLE) attachFullGuideImages(guide.name, title);
 			restoreQuestingModes();
@@ -3210,6 +3303,7 @@
 
 	function init() {
 		applyTheme();
+		applyPanelOpacity();
 		document.getElementById("search").addEventListener("input", renderList);
 		document.getElementById("btn-home").addEventListener("click", goHome);
 
@@ -3285,12 +3379,36 @@
 			applyTheme();
 		});
 
+		["overlay", "panel"].forEach(function (kind) {
+			var field = kind + "-opacity";
+			var value = document.getElementById(field + "-value");
+			var input = document.getElementById(field);
+			function refreshOpacity() {
+				var pct = opacityPercent(prefs[kind + "Opacity"], kind === "overlay" ? 86 : 100);
+				input.value = pct;
+				value.textContent = pct + "%";
+			}
+			refreshOpacity();
+			input.addEventListener("input", function () {
+				prefs[kind + "Opacity"] = opacityPercent(input.value, kind === "overlay" ? 86 : 100);
+				store(PREFS_KEY, prefs);
+				refreshOpacity();
+				if (kind === "panel") applyPanelOpacity();
+				else if (overlayTimer) paintOverlay();
+			});
+		});
+
 		document.getElementById("btn-overview").addEventListener("click", function () {
 			var anyOpen = overviewButtonLabel();
 			OVERVIEW_PANELS.forEach(function (id) {
 				document.getElementById(id).open = !anyOpen;
 			});
 			overviewButtonLabel();
+		});
+		document.getElementById("btn-overview-visibility").addEventListener("click", function () {
+			prefs.overviewHidden = !prefs.overviewHidden;
+			store(PREFS_KEY, prefs);
+			applyOverviewVisibility();
 		});
 		// Folding a single section by its summary keeps the button honest.
 		OVERVIEW_PANELS.forEach(function (id) {
@@ -3388,6 +3506,30 @@
 			for (var i = flatSteps.length - 1; i >= 0; i--) {
 				if (isDone(flatSteps[i])) { setDone(flatSteps[i], false); break; }
 			}
+		});
+
+		// Completion can be recorded when the player has finished a quest
+		// outside the helper. Use the same two-click guard as Reset.
+		var completeBtn = document.getElementById("btn-complete");
+		var completeArmed = false, completeTimer = null;
+		function disarmComplete() {
+			completeArmed = false;
+			completeBtn.textContent = "Mark complete";
+			completeBtn.classList.remove("active");
+			if (completeTimer) { clearTimeout(completeTimer); completeTimer = null; }
+		}
+		completeBtn.addEventListener("click", function () {
+			if (!guide) return;
+			if (!completeArmed) {
+				completeArmed = true;
+				completeBtn.textContent = "Complete? Click again";
+				completeBtn.classList.add("active");
+				completeTimer = setTimeout(disarmComplete, 3000);
+				return;
+			}
+			disarmComplete();
+			markQuestComplete();
+			maybeFinishQuest();
 		});
 
 		// Two-click confirm instead of confirm(): Alt1's embedded browser
@@ -3603,6 +3745,8 @@
 		mergeProgress: mergeProgress,
 		questingModesToRestore: questingModesToRestore,
 		assistTargets: assistTargets,
+		npcNamesForText: npcNamesForText,
+		dialogTitleConflicts: dialogTitleConflicts,
 		autoTickBlockedBySubs: autoTickBlockedBySubs,
 		normName: normName,
 		parseRmPayload: parseRmPayload,
@@ -3659,8 +3803,9 @@
 		},
 		resetOptionScreens: function () {
 			optScreen.key = null; optScreen.sig = null; optScreen.idx = 0; optScreen.gone = 0;
-			optScreen.nextCand = {}; optScreen.matchedCand = -1; optScreen.matchedTarget = null;
+			optScreen.optionsGone = 0; optScreen.nextCand = {}; optScreen.matchedCand = -1; optScreen.matchedTarget = null;
 		},
+		optionScreenNoOptions: screenIndexNoOptions,
 		setAuto: function (v) { autoAdvance = v; }
 	};
 

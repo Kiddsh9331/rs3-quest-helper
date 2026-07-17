@@ -53,8 +53,9 @@
 				<div class="progress-bar"><div id="progress-fill"></div></div>
 				<span id="progress-label"></span>
 			</div>
+			<button id="btn-overview-visibility" title="Hide or show the requirements overview">Hide overview</button>
 		</header>
-		<section class="quest-meta">
+		<section id="quest-meta" class="quest-meta">
 			<div class="meta-top">
 				<div id="quest-info"></div>
 				<button id="btn-overview" class="overview-toggle" title="Collapse or expand the whole overview at once">Collapse overview</button>
@@ -107,6 +108,7 @@
 				<option value="bc">Bottom</option>
 				<option value="free">Free…</option>
 			</select>
+			<button id="btn-complete" title="Mark every step complete when you finished outside the helper">Mark complete</button>
 			<button id="btn-settings-guide" title="Settings">&#9881;</button>
 			<button id="btn-reset" title="Clear all progress for this quest">Reset</button>
 		</footer>
@@ -132,6 +134,16 @@
 					<option value="light">Parchment light</option>
 					<option value="black">Pure black</option>
 				</select>
+			</div>
+			<div class="settings-row">
+				<label for="panel-opacity">App transparency</label>
+				<input id="panel-opacity" type="range" min="30" max="100" step="1" title="Lower values make the app panel more transparent">
+				<span id="panel-opacity-value">100%</span>
+			</div>
+			<div class="settings-row">
+				<label for="overlay-opacity">Overlay transparency</label>
+				<input id="overlay-opacity" type="range" min="30" max="100" step="1" title="Lower values make the game overlay more transparent">
+				<span id="overlay-opacity-value">86%</span>
 			</div>
 			<div class="settings-row">
 				<label title="Key that completes the current step while the APP window is focused (not while playing)">&ldquo;Done, next&rdquo; key (app focused)</label>

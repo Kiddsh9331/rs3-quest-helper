@@ -356,6 +356,31 @@
 		check("birthright: returned menu records the later candidate",
 			window.__rs3qh.matchedCandIndex(veldabanChat, veldabanMenu, vs2.index, vs2.candidateStart) === 2);
 
+		// Hunt for Red Raktuber returns to the exact same dance-answer menu
+		// after each reply. The intervening response screen must move to the
+		// next wiki candidate instead of restarting at Chicklings.
+		var raktuberChat = "4 Chicklings / 5 Squirrels / 1 Blue / 3 Bears / 4 Kiss / 2 Sharks / 1 Yes, that sounds great!";
+		var raktuberMenu = [
+			{ text: "Blue" }, { text: "Sharks" }, { text: "Bears" },
+			{ text: "Chicklings" }, { text: "Squirrels" }
+		];
+		window.__rs3qh.resetOptionScreens();
+		var rs0 = oss("raktuber", raktuberMenu, "parent");
+		rom("parent", window.__rs3qh.matchedCandIndex(raktuberChat, raktuberMenu, rs0.index, rs0.candidateStart));
+		window.__rs3qh.optionScreenNoOptions();
+		window.__rs3qh.optionScreenNoOptions();
+		var rs1 = oss("raktuber", raktuberMenu, "parent");
+		check("raktuber: identical returning menu moves to next dance answer",
+			rs1.candidateStart === 1 && mo(raktuberChat, raktuberMenu, rs1.index, rs1.candidateStart)[0] === raktuberMenu[4]);
+
+		// The Fremennik Trials repeats the same Merchant-trial prompt with
+		// many NPCs. A recognised different speaker must not count as evidence.
+		var npcNames = window.__rs3qh.npcNamesForText("Talk to the Sailor on the middle dock.");
+		check("merchant trial: reads NPC name from guide step", npcNames.length === 1 && npcNames[0] === "Sailor");
+		check("merchant trial: rejects wrong recognised NPC", window.__rs3qh.dialogTitleConflicts({ npcNames: npcNames }, "olaf the bard"));
+		check("merchant trial: accepts the expected NPC", !window.__rs3qh.dialogTitleConflicts({ npcNames: npcNames }, "sailor"));
+		check("merchant trial: generic option title does not block", !window.__rs3qh.dialogTitleConflicts({ npcNames: npcNames }, "choose an option"));
+
 		// Progress export/import (cross-browser sync): round-trips, unions on
 		// merge, never un-ticks, rejects junk.
 		var enc = window.__rs3qh.encodeProgress, dec = window.__rs3qh.decodeProgress, mrg = window.__rs3qh.mergeProgress;

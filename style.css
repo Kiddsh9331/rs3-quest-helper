@@ -2,10 +2,11 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-	--bg: #1b1f1b;
-	--panel: #262c26;
-	--panel-2: #2f372f;
-	--border: #4a5a3a;
+	--app-alpha: 1;
+	--bg: rgba(27, 31, 27, var(--app-alpha));
+	--panel: rgba(38, 44, 38, var(--app-alpha));
+	--panel-2: rgba(47, 55, 47, var(--app-alpha));
+	--border: rgba(74, 90, 58, var(--app-alpha));
 	--text: #e8e2d0;
 	--muted: #a89f88;
 	--gold: #e7c15a;
@@ -24,10 +25,10 @@
 }
 
 :root[data-theme="light"] {
-	--bg: #e7dfc9;
-	--panel: #f4eeda;
-	--panel-2: #e0d6ba;
-	--border: #a4936a;
+	--bg: rgba(231, 223, 201, var(--app-alpha));
+	--panel: rgba(244, 238, 218, var(--app-alpha));
+	--panel-2: rgba(224, 214, 186, var(--app-alpha));
+	--border: rgba(164, 147, 106, var(--app-alpha));
 	--text: #2c2618;
 	--muted: #6f6449;
 	--gold: #8a6a15;
@@ -46,10 +47,10 @@
 }
 
 :root[data-theme="black"] {
-	--bg: #000;
-	--panel: #101010;
-	--panel-2: #1c1c1c;
-	--border: #3c3c3c;
+	--bg: rgba(0, 0, 0, var(--app-alpha));
+	--panel: rgba(16, 16, 16, var(--app-alpha));
+	--panel-2: rgba(28, 28, 28, var(--app-alpha));
+	--border: rgba(60, 60, 60, var(--app-alpha));
 }
 
 html, body { height: 100%; }
