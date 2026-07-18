@@ -2607,6 +2607,40 @@
 		if (overlayTimer) paintOverlay();
 	}
 
+	// Whether a quest guide is on screen, so an advance/hotkey has a step to
+	// act on. Null-safe on the element so it's callable under test.
+	function guideVisible() {
+		var gv = document.getElementById("view-guide");
+		return !!guide && (!gv || !gv.classList.contains("hidden"));
+	}
+
+	// Complete the current step. Returns whether one was actually ticked.
+	function advanceStep(fromHotkey) {
+		if (!guideVisible()) return false;
+		var cur = currentStep();
+		if (!cur) return false;
+		setDone(cur, true);
+		// Pressed from inside the game (Alt1 hotkey): confirm on-screen so the
+		// player knows it registered without looking at the app.
+		if (fromHotkey) flashOverlayText(allStepsDone() ? "✓ Quest complete!" : "✓ Step done");
+		maybeFinishQuest();
+		return true;
+	}
+
+	// Alt1's app hotkey (Alt+1). Advances the step AND always reports receipt
+	// in the app window — the on-screen flash needs the overlay permission and
+	// fails silently without it, so the status line is how Alt+1 stays
+	// verifiable when the overlay is off or its permission is missing.
+	var alt1HotkeyHits = 0;
+	function onAlt1Hotkey() {
+		alt1HotkeyHits++;
+		var advanced = advanceStep(true);
+		if (!advanced) flashOverlayText("Alt+1 received — open a quest to tick steps");
+		setStatus("guide-status", "Alt+1 received (" + alt1HotkeyHits + ")" +
+			(advanced ? " — step ticked." : " — no quest open to tick."));
+		return advanced;
+	}
+
 	// ---------- rendering ----------
 
 	function el(tag, className, text) {
@@ -3489,25 +3523,15 @@
 				: "Imported — your progress already covered everything in that code.";
 		});
 
-		function advanceStep(fromHotkey) {
-			if (!guide || document.getElementById("view-guide").classList.contains("hidden")) return;
-			var cur = currentStep();
-			if (!cur) return;
-			setDone(cur, true);
-			// Pressed from inside the game (Alt1 hotkey): confirm on-screen so
-			// the player knows it registered without looking at the app.
-			if (fromHotkey) flashOverlayText(allStepsDone() ? "✓ Quest complete!" : "✓ Step done");
-			maybeFinishQuest();
-		}
-
 		document.getElementById("btn-next").addEventListener("click", function () { advanceStep(false); });
+
 		// "Done, next" from inside the game: Alt1's main hotkey (Alt+1 by
 		// default, configurable in Alt1's settings) advances the step, so the
 		// overlay alone is enough to quest by. This is the only key that works
 		// while the game window is focused — a web app can't capture keys
 		// otherwise, which is why there's no in-app key binding.
 		if (inAlt1() && typeof A1lib.on === "function") {
-			A1lib.on("alt1pressed", function () { advanceStep(true); });
+			A1lib.on("alt1pressed", onAlt1Hotkey);
 		}
 
 		document.getElementById("btn-back").addEventListener("click", function () {
@@ -3794,6 +3818,31 @@
 		setFloorPref: function (v) { prefs.floors = v; },
 		setOverlayScale: function (v) { prefs.overlayScale = v; },
 		setOverlayOpacity: function (v) { prefs.overlayOpacity = v; },
+		advanceStep: advanceStep,
+		// Simulate an Alt+1 press on a two-step guide and report the current
+		// step before/after, so the hotkey->advance path is testable headless
+		// (Alt1's actual event delivery can't be, but everything after it can).
+		testAlt1Advance: function () {
+			var gsave = guide, fsave = flatSteps, testTitle = "__rs3qh_advance_test__";
+			var savedProgress = progress[testTitle];
+			var gv = document.getElementById("view-guide");
+			var wasHidden = gv && gv.classList.contains("hidden");
+			if (gv) gv.classList.remove("hidden");
+			guide = { name: "Advance Test", title: testTitle, sections: [] };
+			flatSteps = [
+				{ text: "First", sectionIndex: 0, stepIndex: 0 },
+				{ text: "Second", sectionIndex: 0, stepIndex: 1 }
+			];
+			var before = currentStep();
+			var got = onAlt1Hotkey();
+			var after = currentStep();
+			guide = gsave; flatSteps = fsave;
+			if (gv && wasHidden) gv.classList.add("hidden");
+			if (savedProgress === undefined) delete progress[testTitle];
+			else progress[testTitle] = savedProgress;
+			store(PROGRESS_KEY, progress);
+			return { advanced: got, before: before && before.text, after: after && after.text };
+		},
 		parseTimelineOrder: parseTimelineOrder,
 		fetchTimelineOrder: fetchTimelineOrder,
 		overlaySubRows: overlaySubRows,
