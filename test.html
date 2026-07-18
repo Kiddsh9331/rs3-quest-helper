@@ -451,6 +451,26 @@
 		check("modes: auto implies assist even if assist flag missing", qmr({}, true).assist === true);
 		check("modes: overlay alone doesn't turn on assist", qmr({ overlayOn: true }, false).assist === false);
 
+		// Scroll target: opening a quest / advancing into a new section should
+		// align the section HEADING (so it isn't scrolled off), but a step in
+		// the middle of a section aligns the step itself.
+		var stf = window.__rs3qh.scrollTargetFor;
+		function row(cls) { var d = document.createElement("div"); d.className = cls; return d; }
+		function build(specs) {
+			var box = document.createElement("div");
+			var nodes = specs.map(function (c) { var n = row(c); box.appendChild(n); return n; });
+			return nodes;
+		}
+		// section-title, needed, image, [current first step] -> heading
+		var n1 = build(["section-title", "section-needed", "guide-img", "step current"]);
+		check("scroll: first step of a section targets its heading", stf(n1[3]) === n1[0]);
+		// section-title, done step, [current step] -> the step itself
+		var n2 = build(["section-title", "step done", "step current"]);
+		check("scroll: mid-section step targets itself", stf(n2[2]) === n2[2]);
+		// section A (done step), section B title, [current first step of B] -> B heading
+		var n3 = build(["section-title", "step done", "section-title", "step current"]);
+		check("scroll: first step of a later section targets that section's heading", stf(n3[3]) === n3[2]);
+
 		// Alt+1 hotkey path: advanceStep(true) ticks the current step and moves
 		// to the next. (Alt1's delivery of the event can't be tested headless,
 		// but everything from the handler onward can.)

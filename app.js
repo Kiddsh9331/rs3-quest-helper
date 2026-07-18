@@ -2919,13 +2919,28 @@
 
 	// Bring the current step to the top of the list (with a little context
 	// above). The formula is relative to the live layout, so calling it again
-	// after the layout changes re-lands on the same spot.
+	// after the layout changes re-lands on the same spot. When the current
+	// step is the FIRST of its section, scroll to the section heading instead
+	// so opening a quest (or advancing into a new section) shows the heading
+	// rather than scrolling it off — for the first section this lands at the
+	// very top.
+	// The element to bring to the top for a given current-step row: the step
+	// itself, unless it's the first of its section (only non-step siblings
+	// above it up to a section heading), in which case the heading.
+	function scrollTargetFor(active) {
+		for (var prev = active.previousElementSibling; prev; prev = prev.previousElementSibling) {
+			if (prev.classList.contains("step")) break;        // a step above → keep the step as target
+			if (prev.classList.contains("section-title")) return prev;
+		}
+		return active;
+	}
 	function scrollCurrentToTop(main) {
 		var active = main.querySelector(".step.current");
 		if (!active) return;
+		var target = scrollTargetFor(active);
 		var mTop = main.getBoundingClientRect().top;
-		var aTop = active.getBoundingClientRect().top;
-		main.scrollTop += (aTop - mTop) - 12;
+		var tTop = target.getBoundingClientRect().top;
+		main.scrollTop += (tTop - mTop) - 12;
 	}
 
 	// Guide images load AFTER the list is rebuilt (lazy, no reserved height),
@@ -3757,6 +3772,7 @@
 		lastMatchableCand: lastMatchableCand,
 		matchedCandIndex: matchedCandIndex,
 		sizePercent: sizePercent,
+		scrollTargetFor: scrollTargetFor,
 		encodeProgress: encodeProgress,
 		decodeProgress: decodeProgress,
 		mergeProgress: mergeProgress,
