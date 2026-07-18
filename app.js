@@ -1591,23 +1591,6 @@
 			typeof A1lib !== "undefined" && typeof Dialog !== "undefined";
 	}
 
-	// Store a KeyboardEvent.key as a stable token: single letters lower-cased
-	// so matching is case-insensitive; named keys (Enter, ArrowRight, " ")
-	// kept verbatim. Pure — used by the settings capture and the handler.
-	function normKeybind(key) {
-		if (!key) return "";
-		return key.length === 1 ? key.toLowerCase() : key;
-	}
-
-	// Human-readable label for a stored keybind token.
-	function keyLabel(key) {
-		if (!key) return "—";
-		var named = { " ": "Space", Enter: "Enter", ArrowRight: "→", ArrowLeft: "←",
-			ArrowUp: "↑", ArrowDown: "↓", Tab: "Tab", Backspace: "Backspace" };
-		if (named[key]) return named[key];
-		return key.length === 1 ? key.toUpperCase() : key;
-	}
-
 	// Normalise option text for comparison: lowercase, no punctuation.
 	function normOpt(s) {
 		return s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -3519,44 +3502,13 @@
 
 		document.getElementById("btn-next").addEventListener("click", function () { advanceStep(false); });
 		// "Done, next" from inside the game: Alt1's main hotkey (Alt+1 by
-		// default, configurable in Alt1's settings) advances the step, so
-		// the overlay alone is enough to quest by — this is the ONLY key that
-		// works while the game window is focused (a web app can't capture
-		// keys otherwise). The configurable key below only works when the
-		// app window itself has focus.
+		// default, configurable in Alt1's settings) advances the step, so the
+		// overlay alone is enough to quest by. This is the only key that works
+		// while the game window is focused — a web app can't capture keys
+		// otherwise, which is why there's no in-app key binding.
 		if (inAlt1() && typeof A1lib.on === "function") {
 			A1lib.on("alt1pressed", function () { advanceStep(true); });
 		}
-
-		// In-app "Done, next" key (configurable in Settings). Matches on
-		// e.key case-insensitively; skips typing into form fields.
-		var keybindBtn = document.getElementById("btn-keybind");
-		var capturingKey = false;
-		function setKeybindLabel() {
-			keybindBtn.textContent = capturingKey ? "Press a key…" : keyLabel(prefs.advanceKey || "n");
-		}
-		setKeybindLabel();
-		keybindBtn.addEventListener("click", function () {
-			capturingKey = true;
-			setKeybindLabel();
-		});
-		window.addEventListener("keydown", function (e) {
-			if (capturingKey) {
-				// Ignore lone modifier presses; wait for a real key.
-				if (["Shift", "Control", "Alt", "Meta"].indexOf(e.key) !== -1) return;
-				e.preventDefault();
-				capturingKey = false;
-				if (e.key !== "Escape") {
-					prefs.advanceKey = normKeybind(e.key);
-					store(PREFS_KEY, prefs);
-				}
-				setKeybindLabel();
-				return;
-			}
-			var tag = ((e.target && e.target.tagName) || "").toLowerCase();
-			if (tag === "input" || tag === "textarea" || tag === "select") return;
-			if (normKeybind(e.key) === (prefs.advanceKey || "n")) advanceStep(false);
-		});
 
 		document.getElementById("btn-back").addEventListener("click", function () {
 			for (var i = flatSteps.length - 1; i >= 0; i--) {
@@ -3795,8 +3747,6 @@
 		lastMatchableCand: lastMatchableCand,
 		matchedCandIndex: matchedCandIndex,
 		sizePercent: sizePercent,
-		normKeybind: normKeybind,
-		keyLabel: keyLabel,
 		encodeProgress: encodeProgress,
 		decodeProgress: decodeProgress,
 		mergeProgress: mergeProgress,

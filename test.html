@@ -451,15 +451,6 @@
 		check("modes: auto implies assist even if assist flag missing", qmr({}, true).assist === true);
 		check("modes: overlay alone doesn't turn on assist", qmr({ overlayOn: true }, false).assist === false);
 
-		// Keybind tokens: single letters case-fold, named keys stay verbatim,
-		// labels are human-readable.
-		var nk = window.__rs3qh.normKeybind, kl = window.__rs3qh.keyLabel;
-		check("keybind: letter lower-cases", nk("N") === "n" && nk("q") === "q");
-		check("keybind: named key verbatim", nk("Enter") === "Enter" && nk("ArrowRight") === "ArrowRight");
-		check("keybind: label upper-cases letter", kl("n") === "N");
-		check("keybind: label names space/arrow", kl(" ") === "Space" && kl("ArrowRight") === "→");
-		check("keybind: N and n match same binding", nk("N") === nk("n"));
-
 		// Dialogue targets: sub-steps outrank the parent, so a conversation
 		// matching a sub ticks the sub — the parent (often ending in "Any")
 		// can no longer claim every conversation and sweep subs done.
