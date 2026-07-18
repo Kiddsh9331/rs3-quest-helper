@@ -3,7 +3,7 @@
 
 :root {
 	--app-alpha: 1;
-	--guide-font-scale: 1;
+	--app-font-scale: 1;
 	--bg: rgba(27, 31, 27, var(--app-alpha));
 	--panel: rgba(38, 44, 38, var(--app-alpha));
 	--panel-2: rgba(47, 55, 47, var(--app-alpha));
@@ -59,7 +59,9 @@ html, body { height: 100%; }
 body {
 	background: var(--bg);
 	color: var(--text);
-	font: 13px/1.45 "Segoe UI", Arial, sans-serif;
+	font-family: "Segoe UI", Arial, sans-serif;
+	line-height: 1.45;
+	font-size: calc(var(--app-font-scale) * 13px);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
@@ -73,7 +75,7 @@ a { color: var(--gold); }
 	background: var(--active-bg);
 	color: var(--gold);
 	padding: 6px 10px;
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 	border-bottom: 1px solid var(--border);
 }
 
@@ -101,7 +103,7 @@ header {
 	border: 1px solid var(--border);
 	border-radius: 3px;
 	padding: 5px 8px;
-	font-size: 13px;
+	font-size: calc(var(--app-font-scale) * 13px);
 }
 
 #search:focus { outline: none; border-color: var(--gold); }
@@ -109,7 +111,7 @@ header {
 .status {
 	padding: 10px;
 	color: var(--muted);
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 	text-align: center;
 }
 
@@ -121,7 +123,7 @@ header {
 	padding: 6px 8px;
 	background: var(--panel);
 	border-bottom: 1px solid var(--border);
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 }
 
 #rsn {
@@ -132,7 +134,7 @@ header {
 	border: 1px solid var(--border);
 	border-radius: 3px;
 	padding: 4px 6px;
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 }
 
 #rsn:focus { outline: none; border-color: var(--gold); }
@@ -154,14 +156,14 @@ header {
 	border: 1px solid var(--border);
 	border-radius: 3px;
 	padding: 3px 4px;
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 }
 
 .rm-import {
 	padding: 6px 10px;
 	background: var(--panel);
 	border-bottom: 1px solid var(--border);
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 	color: var(--muted);
 	display: flex;
 	flex-direction: column;
@@ -176,23 +178,23 @@ header {
 	color: var(--text);
 	border: 1px solid var(--border);
 	border-radius: 3px;
-	font: 11px monospace;
+	font-family: monospace; font-size: calc(var(--app-font-scale) * 11px);
 	padding: 4px;
 	resize: vertical;
 }
 
 .rm-import-row { display: flex; gap: 6px; }
-.rm-import-row button { padding: 3px 10px; font-size: 11px; }
+.rm-import-row button { padding: 3px 10px; font-size: calc(var(--app-font-scale) * 11px); }
 
 .quest-rank {
 	color: var(--muted);
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	min-width: 34px;
 	text-align: right;
 }
 
 .quest-status {
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	white-space: nowrap;
 	padding: 0 6px;
 	border-radius: 3px;
@@ -229,7 +231,7 @@ header {
 .quest-name { flex: 1; }
 
 .quest-progress {
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	color: var(--green);
 	white-space: nowrap;
 }
@@ -267,13 +269,13 @@ header {
 	transition: width .2s;
 }
 
-#progress-label { font-size: 11px; color: var(--muted); }
+#progress-label { font-size: calc(var(--app-font-scale) * 11px); color: var(--muted); }
 
 .quest-meta {
 	padding: 6px 10px;
 	background: var(--panel);
 	border-bottom: 1px solid var(--border);
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 	color: var(--muted);
 	/* However big the overview grows, the step list below keeps space. */
 	max-height: 55vh;
@@ -285,7 +287,7 @@ header {
 	display: inline-block;
 	padding: 0 6px;
 	border-radius: 3px;
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	margin-left: 4px;
 	background: var(--panel-2);
 	border: 1px solid var(--border);
@@ -308,7 +310,7 @@ header {
 
 .overview-toggle {
 	padding: 2px 8px;
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	flex-shrink: 0;
 }
 
@@ -350,7 +352,7 @@ header {
 .scan-mark.unknown { color: var(--gold); }
 
 .scan-count {
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	color: var(--muted);
 	font-family: monospace;
 }
@@ -362,7 +364,7 @@ header {
 }
 
 .details-block summary {
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: .03em;
@@ -380,20 +382,20 @@ header {
 	margin: 6px 0 2px;
 }
 
-.scan-row button { padding: 3px 8px; font-size: 11px; }
+.scan-row button { padding: 3px 8px; font-size: calc(var(--app-font-scale) * 11px); }
 
-#scan-status { font-size: 11px; color: var(--muted); }
+#scan-status { font-size: calc(var(--app-font-scale) * 11px); color: var(--muted); }
 
 main {
 	flex: 1;
 	overflow-y: auto;
 	padding: 6px 8px 12px;
-	font-size: calc(var(--guide-font-scale) * 12px);
+	font-size: calc(var(--app-font-scale) * 12px);
 }
 
 .section-title {
 	margin: 10px 2px 4px;
-	font-size: calc(var(--guide-font-scale) * 12px);
+	font-size: calc(var(--app-font-scale) * 12px);
 	font-weight: 600;
 	color: var(--gold);
 	text-transform: uppercase;
@@ -402,7 +404,7 @@ main {
 
 .section-needed {
 	margin: 0 2px 4px;
-	font-size: calc(var(--guide-font-scale) * 11px);
+	font-size: calc(var(--app-font-scale) * 11px);
 	color: var(--muted);
 	font-style: italic;
 }
@@ -443,7 +445,7 @@ main {
 	color: var(--chat);
 	border: 1px solid var(--chip-border);
 	border-radius: 3px;
-	font-size: calc(var(--guide-font-scale) * 11px);
+	font-size: calc(var(--app-font-scale) * 11px);
 	padding: 0 5px;
 	margin-left: 5px;
 }
@@ -507,7 +509,7 @@ main {
 	max-height: 80vh;
 	overflow-y: auto;
 	padding: 10px 12px;
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 }
 
 .item-popup-head {
@@ -518,16 +520,16 @@ main {
 }
 
 #item-popup-title { flex: 1; font-weight: 600; color: var(--gold); }
-#item-popup-close { padding: 2px 8px; font-size: 11px; }
+#item-popup-close { padding: 2px 8px; font-size: calc(var(--app-font-scale) * 11px); }
 #item-popup-body p { margin: 4px 0; line-height: 1.5; }
 #item-popup-body ul { margin: 2px 0 6px 16px; }
 
 #settings-title { flex: 1; font-weight: 600; color: var(--gold); }
-#settings-close { padding: 2px 8px; font-size: 11px; }
+#settings-close { padding: 2px 8px; font-size: calc(var(--app-font-scale) * 11px); }
 #btn-settings-home,
 #btn-settings-guide {
 	font-family: "Segoe UI Symbol", "Segoe UI", Arial, sans-serif;
-	font-size: 14px;
+	font-size: calc(var(--app-font-scale) * 14px);
 	line-height: 1;
 	padding: 5px 9px;
 }
@@ -554,14 +556,14 @@ main {
 	border: 1px solid var(--border);
 	border-radius: 3px;
 	padding: 4px 6px;
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 }
 
 .settings-row select:hover,
 .settings-row button:hover { border-color: var(--gold); cursor: pointer; }
 
 .settings-note {
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	color: var(--muted);
 	margin-top: 8px;
 	line-height: 1.5;
@@ -576,7 +578,7 @@ main {
 	color: var(--text);
 	border: 1px solid var(--border);
 	border-radius: 3px;
-	font: 11px monospace;
+	font-family: monospace; font-size: calc(var(--app-font-scale) * 11px);
 	padding: 5px;
 	resize: vertical;
 	word-break: break-all;
@@ -610,7 +612,7 @@ main {
 .guide-img.expanded img { cursor: zoom-out; }
 
 .guide-img figcaption {
-	font-size: calc(var(--guide-font-scale) * 11px);
+	font-size: calc(var(--app-font-scale) * 11px);
 	color: var(--muted);
 	margin-top: 2px;
 	font-style: italic;
@@ -618,14 +620,14 @@ main {
 
 .step-note {
 	display: block;
-	font-size: calc(var(--guide-font-scale) * 11px);
+	font-size: calc(var(--app-font-scale) * 11px);
 	color: var(--muted);
 	margin-top: 3px;
 }
 
 .sub-list {
 	margin: 4px 0 0 4px;
-	font-size: calc(var(--guide-font-scale) * 12px);
+	font-size: calc(var(--app-font-scale) * 12px);
 	color: var(--muted);
 	list-style: none;
 }
@@ -653,7 +655,7 @@ main {
 
 .sub-list .members {
 	color: var(--gold);
-	font-size: calc(var(--guide-font-scale) * 10px);
+	font-size: calc(var(--app-font-scale) * 10px);
 	border: 1px solid var(--border);
 	border-radius: 3px;
 	padding: 0 3px;
@@ -676,7 +678,7 @@ main {
 	align-items: center;
 	gap: 10px;
 	padding: 4px 8px;
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 	color: var(--muted);
 }
 
@@ -684,7 +686,7 @@ main {
 
 #map-close {
 	padding: 2px 8px;
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 }
 
 #map-frame {
@@ -700,7 +702,7 @@ main {
 	padding: 6px 10px;
 	background: var(--panel);
 	border-top: 1px solid var(--border);
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	color: var(--muted);
 }
 
@@ -729,13 +731,13 @@ main {
 
 .shop-lock {
 	color: var(--gold);
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	margin-top: 1px;
 }
 
 .assist-status {
 	padding: 4px 10px;
-	font-size: 11px;
+	font-size: calc(var(--app-font-scale) * 11px);
 	color: var(--chat);
 	background: var(--panel);
 	border-top: 1px solid var(--border);
@@ -758,7 +760,7 @@ button {
 	border: 1px solid var(--border);
 	border-radius: 3px;
 	padding: 6px 8px;
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 	cursor: pointer;
 	white-space: nowrap;
 }
@@ -771,7 +773,7 @@ footer select {
 	border: 1px solid var(--border);
 	border-radius: 3px;
 	padding: 5px 4px;
-	font-size: 12px;
+	font-size: calc(var(--app-font-scale) * 12px);
 }
 
 button.primary {

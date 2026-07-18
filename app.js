@@ -378,8 +378,11 @@
 	function overlayScale() {
 		return sizePercent(prefs.overlayScale, 100, 100, 200) / 100;
 	}
-	function applyGuideFontScale() {
-		document.documentElement.style.setProperty("--guide-font-scale",
+	// Scales all app text via a CSS variable the stylesheet multiplies every
+	// font-size by. Pref key stays "guideScale" for back-compat with settings
+	// saved before this became app-wide.
+	function applyAppTextScale() {
+		document.documentElement.style.setProperty("--app-font-scale",
 			String(sizePercent(prefs.guideScale, 100, 80, 160) / 100));
 	}
 	function floorText(usNum, conv) {
@@ -3323,7 +3326,7 @@
 	function init() {
 		applyTheme();
 		applyPanelOpacity();
-		applyGuideFontScale();
+		applyAppTextScale();
 		document.getElementById("search").addEventListener("input", renderList);
 		document.getElementById("btn-home").addEventListener("click", goHome);
 
@@ -3421,8 +3424,8 @@
 		[
 			{ id: "overlay-size", pref: "overlayScale", min: 100, max: 200,
 				apply: function () { if (overlayTimer) paintOverlay(); } },
-			{ id: "guide-size", pref: "guideScale", min: 80, max: 160,
-				apply: applyGuideFontScale }
+			{ id: "app-size", pref: "guideScale", min: 80, max: 160,
+				apply: applyAppTextScale }
 		].forEach(function (cfg) {
 			var value = document.getElementById(cfg.id + "-value");
 			var input = document.getElementById(cfg.id);
