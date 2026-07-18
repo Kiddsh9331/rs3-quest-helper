@@ -2627,20 +2627,6 @@
 		return true;
 	}
 
-	// Alt1's app hotkey (Alt+1). Advances the step AND always reports receipt
-	// in the app window — the on-screen flash needs the overlay permission and
-	// fails silently without it, so the status line is how Alt+1 stays
-	// verifiable when the overlay is off or its permission is missing.
-	var alt1HotkeyHits = 0;
-	function onAlt1Hotkey() {
-		alt1HotkeyHits++;
-		var advanced = advanceStep(true);
-		if (!advanced) flashOverlayText("Alt+1 received — open a quest to tick steps");
-		setStatus("guide-status", "Alt+1 received (" + alt1HotkeyHits + ")" +
-			(advanced ? " — step ticked." : " — no quest open to tick."));
-		return advanced;
-	}
-
 	// ---------- rendering ----------
 
 	function el(tag, className, text) {
@@ -3531,7 +3517,7 @@
 		// while the game window is focused — a web app can't capture keys
 		// otherwise, which is why there's no in-app key binding.
 		if (inAlt1() && typeof A1lib.on === "function") {
-			A1lib.on("alt1pressed", onAlt1Hotkey);
+			A1lib.on("alt1pressed", function () { advanceStep(true); });
 		}
 
 		document.getElementById("btn-back").addEventListener("click", function () {
@@ -3818,10 +3804,10 @@
 		setFloorPref: function (v) { prefs.floors = v; },
 		setOverlayScale: function (v) { prefs.overlayScale = v; },
 		setOverlayOpacity: function (v) { prefs.overlayOpacity = v; },
-		advanceStep: advanceStep,
-		// Simulate an Alt+1 press on a two-step guide and report the current
-		// step before/after, so the hotkey->advance path is testable headless
-		// (Alt1's actual event delivery can't be, but everything after it can).
+		// Simulate an Alt+1 press (advanceStep with the hotkey flag) on a
+		// two-step guide and report the current step before/after, so the
+		// hotkey->advance path is testable headless (Alt1's actual event
+		// delivery can't be, but everything after it can).
 		testAlt1Advance: function () {
 			var gsave = guide, fsave = flatSteps, testTitle = "__rs3qh_advance_test__";
 			var savedProgress = progress[testTitle];
@@ -3834,7 +3820,7 @@
 				{ text: "Second", sectionIndex: 0, stepIndex: 1 }
 			];
 			var before = currentStep();
-			var got = onAlt1Hotkey();
+			var got = advanceStep(true);
 			var after = currentStep();
 			guide = gsave; flatSteps = fsave;
 			if (gv && wasHidden) gv.classList.add("hidden");

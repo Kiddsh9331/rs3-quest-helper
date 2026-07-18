@@ -451,9 +451,9 @@
 		check("modes: auto implies assist even if assist flag missing", qmr({}, true).assist === true);
 		check("modes: overlay alone doesn't turn on assist", qmr({ overlayOn: true }, false).assist === false);
 
-		// Alt+1 hotkey path: onAlt1Hotkey -> advanceStep ticks the current step
-		// and moves to the next. (Alt1's delivery of the event can't be tested
-		// headless, but everything from the handler onward can.)
+		// Alt+1 hotkey path: advanceStep(true) ticks the current step and moves
+		// to the next. (Alt1's delivery of the event can't be tested headless,
+		// but everything from the handler onward can.)
 		var adv = window.__rs3qh.testAlt1Advance();
 		check("alt1: hotkey ticks current step and advances", adv.advanced === true && adv.before === "First" && adv.after === "Second");
 
