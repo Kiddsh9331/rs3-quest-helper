@@ -365,7 +365,11 @@
 			String(opacityPercent(prefs.panelOpacity, 100) / 100));
 	}
 	function overlayOpacity() {
-		return opacityPercent(prefs.overlayOpacity, 86) / 100;
+		// 0 allowed: a transparent card background is the one see-through the
+		// Alt1 overlay can render (semi-transparent pixels composite against
+		// black, but fully transparent ones let the game show, so the border
+		// and text float). The app panel keeps a 30% floor elsewhere.
+		return sizePercent(prefs.overlayOpacity, 86, 0, 100) / 100;
 	}
 	// Size sliders (percent). Overlay: the on-screen card is drawn on a
 	// raw-pixel canvas, so it does NOT get Windows DPI scaling and looks tiny
@@ -3402,18 +3406,25 @@
 			applyTheme();
 		});
 
-		["overlay", "panel"].forEach(function (kind) {
+		// Overlay allows 0% (background fully gone → text floats over the game,
+		// the only see-through Alt1 can actually render); the app window keeps a
+		// 30% floor so it never becomes unusably invisible.
+		[
+			{ kind: "overlay", def: 86, min: 0 },
+			{ kind: "panel", def: 100, min: 30 }
+		].forEach(function (cfg) {
+			var kind = cfg.kind;
 			var field = kind + "-opacity";
 			var value = document.getElementById(field + "-value");
 			var input = document.getElementById(field);
 			function refreshOpacity() {
-				var pct = opacityPercent(prefs[kind + "Opacity"], kind === "overlay" ? 86 : 100);
+				var pct = sizePercent(prefs[kind + "Opacity"], cfg.def, cfg.min, 100);
 				input.value = pct;
 				value.textContent = pct + "%";
 			}
 			refreshOpacity();
 			input.addEventListener("input", function () {
-				prefs[kind + "Opacity"] = opacityPercent(input.value, kind === "overlay" ? 86 : 100);
+				prefs[kind + "Opacity"] = sizePercent(input.value, cfg.def, cfg.min, 100);
 				store(PREFS_KEY, prefs);
 				refreshOpacity();
 				if (kind === "panel") applyPanelOpacity();
@@ -3832,6 +3843,7 @@
 		floorPrefForLocale: floorPrefForLocale,
 		setFloorPref: function (v) { prefs.floors = v; },
 		setOverlayScale: function (v) { prefs.overlayScale = v; },
+		setOverlayOpacity: function (v) { prefs.overlayOpacity = v; },
 		parseTimelineOrder: parseTimelineOrder,
 		fetchTimelineOrder: fetchTimelineOrder,
 		overlaySubRows: overlaySubRows,

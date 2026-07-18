@@ -285,6 +285,21 @@
 		check("overlay: 150% renders the card at 660px", cardBig.width === 660);
 		window.__rs3qh.setOverlayScale(100);
 
+		// Overlay opacity 0% clears the card background (game shows through,
+		// only border + text remain); 100% is a solid card.
+		function transparentPixels(img) {
+			var n = 0;
+			for (var i = 3; i < img.data.length; i += 4) if (img.data[i] === 0) n++;
+			return n;
+		}
+		window.__rs3qh.setOverlayOpacity(100);
+		var solidCard = transparentPixels(tos(false));
+		window.__rs3qh.setOverlayOpacity(0);
+		var clearCard = transparentPixels(tos(false));
+		check("overlay opacity 0% clears the background", clearCard > solidCard + 2000);
+		check("overlay opacity 100% is a solid card", solidCard < 1500);
+		window.__rs3qh.setOverlayOpacity(86);
+
 		// Quest-name normalisation (RuneMetrics <-> wiki title matching).
 		var nn = window.__rs3qh.normName;
 		check("norm: miniquest suffix", nn("Doric's Task I (miniquest)") === nn("Doric's Task I"));
