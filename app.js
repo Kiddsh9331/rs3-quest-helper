@@ -367,6 +367,21 @@
 	function overlayOpacity() {
 		return opacityPercent(prefs.overlayOpacity, 86) / 100;
 	}
+	// Size sliders (percent). Overlay: the on-screen card is drawn on a
+	// raw-pixel canvas, so it does NOT get Windows DPI scaling and looks tiny
+	// at high resolutions — this scales it up. Guide: scales the app's guide
+	// text via a CSS variable. Both default to 100% (no change).
+	function sizePercent(value, fallback, min, max) {
+		var n = parseInt(value, 10);
+		return isNaN(n) ? fallback : Math.max(min, Math.min(max, n));
+	}
+	function overlayScale() {
+		return sizePercent(prefs.overlayScale, 100, 100, 200) / 100;
+	}
+	function applyGuideFontScale() {
+		document.documentElement.style.setProperty("--guide-font-scale",
+			String(sizePercent(prefs.guideScale, 100, 80, 160) / 100));
+	}
 	function floorText(usNum, conv) {
 		var n = parseInt(usNum, 10);
 		if (isNaN(n)) return "floor " + (usNum || "");
@@ -1071,10 +1086,14 @@
 	// with wrapped step text, progress, sub-steps, chat options and items.
 	function renderOverlayCard(step, doneCount, total) {
 		var W = 440, PAD = 12, LH = 20, MAXH = 400;
+		// All layout below is in native units; a single ctx.scale renders the
+		// whole card larger so the text stays crisp instead of being upscaled.
+		var S = overlayScale();
 		var canvas = document.createElement("canvas");
-		canvas.width = W;
-		canvas.height = MAXH;
+		canvas.width = Math.round(W * S);
+		canvas.height = Math.round(MAXH * S);
 		var ctx = canvas.getContext("2d", { willReadFrequently: true });
+		ctx.scale(S, S);
 
 		function wrap(text, font, maxLines) {
 			ctx.font = font;
@@ -1193,7 +1212,7 @@
 		ctx.fillStyle = "#9fd47f";
 		neededLines.forEach(function (l) { y += 17; ctx.fillText(l, PAD, y); });
 
-		return ctx.getImageData(0, 0, W, H);
+		return ctx.getImageData(0, 0, Math.round(W * S), Math.round(H * S));
 	}
 
 	function overlayCardPos(w, h) {
@@ -3304,6 +3323,7 @@
 	function init() {
 		applyTheme();
 		applyPanelOpacity();
+		applyGuideFontScale();
 		document.getElementById("search").addEventListener("input", renderList);
 		document.getElementById("btn-home").addEventListener("click", goHome);
 
@@ -3395,6 +3415,28 @@
 				refreshOpacity();
 				if (kind === "panel") applyPanelOpacity();
 				else if (overlayTimer) paintOverlay();
+			});
+		});
+
+		[
+			{ id: "overlay-size", pref: "overlayScale", min: 100, max: 200,
+				apply: function () { if (overlayTimer) paintOverlay(); } },
+			{ id: "guide-size", pref: "guideScale", min: 80, max: 160,
+				apply: applyGuideFontScale }
+		].forEach(function (cfg) {
+			var value = document.getElementById(cfg.id + "-value");
+			var input = document.getElementById(cfg.id);
+			function refreshSize() {
+				var pct = sizePercent(prefs[cfg.pref], 100, cfg.min, cfg.max);
+				input.value = pct;
+				value.textContent = pct + "%";
+			}
+			refreshSize();
+			input.addEventListener("input", function () {
+				prefs[cfg.pref] = sizePercent(input.value, 100, cfg.min, cfg.max);
+				store(PREFS_KEY, prefs);
+				refreshSize();
+				cfg.apply();
 			});
 		});
 
@@ -3738,6 +3780,7 @@
 		requiredConversations: requiredConversations,
 		lastMatchableCand: lastMatchableCand,
 		matchedCandIndex: matchedCandIndex,
+		sizePercent: sizePercent,
 		normKeybind: normKeybind,
 		keyLabel: keyLabel,
 		encodeProgress: encodeProgress,
@@ -3785,6 +3828,7 @@
 		floorText: floorText,
 		floorPrefForLocale: floorPrefForLocale,
 		setFloorPref: function (v) { prefs.floors = v; },
+		setOverlayScale: function (v) { prefs.overlayScale = v; },
 		parseTimelineOrder: parseTimelineOrder,
 		fetchTimelineOrder: fetchTimelineOrder,
 		overlaySubRows: overlaySubRows,

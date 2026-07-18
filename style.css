@@ -3,6 +3,7 @@
 
 :root {
 	--app-alpha: 1;
+	--guide-font-scale: 1;
 	--bg: rgba(27, 31, 27, var(--app-alpha));
 	--panel: rgba(38, 44, 38, var(--app-alpha));
 	--panel-2: rgba(47, 55, 47, var(--app-alpha));
@@ -387,11 +388,12 @@ main {
 	flex: 1;
 	overflow-y: auto;
 	padding: 6px 8px 12px;
+	font-size: calc(var(--guide-font-scale) * 12px);
 }
 
 .section-title {
 	margin: 10px 2px 4px;
-	font-size: 12px;
+	font-size: calc(var(--guide-font-scale) * 12px);
 	font-weight: 600;
 	color: var(--gold);
 	text-transform: uppercase;
@@ -400,7 +402,7 @@ main {
 
 .section-needed {
 	margin: 0 2px 4px;
-	font-size: 11px;
+	font-size: calc(var(--guide-font-scale) * 11px);
 	color: var(--muted);
 	font-style: italic;
 }
@@ -441,7 +443,7 @@ main {
 	color: var(--chat);
 	border: 1px solid var(--chip-border);
 	border-radius: 3px;
-	font-size: 11px;
+	font-size: calc(var(--guide-font-scale) * 11px);
 	padding: 0 5px;
 	margin-left: 5px;
 }
@@ -608,7 +610,7 @@ main {
 .guide-img.expanded img { cursor: zoom-out; }
 
 .guide-img figcaption {
-	font-size: 11px;
+	font-size: calc(var(--guide-font-scale) * 11px);
 	color: var(--muted);
 	margin-top: 2px;
 	font-style: italic;
@@ -616,14 +618,14 @@ main {
 
 .step-note {
 	display: block;
-	font-size: 11px;
+	font-size: calc(var(--guide-font-scale) * 11px);
 	color: var(--muted);
 	margin-top: 3px;
 }
 
 .sub-list {
 	margin: 4px 0 0 4px;
-	font-size: 12px;
+	font-size: calc(var(--guide-font-scale) * 12px);
 	color: var(--muted);
 	list-style: none;
 }
@@ -651,7 +653,7 @@ main {
 
 .sub-list .members {
 	color: var(--gold);
-	font-size: 10px;
+	font-size: calc(var(--guide-font-scale) * 10px);
 	border: 1px solid var(--border);
 	border-radius: 3px;
 	padding: 0 3px;

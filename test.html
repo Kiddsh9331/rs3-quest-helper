@@ -266,6 +266,25 @@
 		res = co("rms", false, null, 1, null);
 		check("seqgate: uninterrupted chain ticks on first end", !!res && !res.held && !res.none && res.subIndex === null);
 
+		// Size sliders (overlay/guide text scaling) clamp to their range and
+		// fall back cleanly on junk input.
+		var sp = window.__rs3qh.sizePercent;
+		check("size: in-range value kept", sp(150, 100, 100, 200) === 150);
+		check("size: below min clamps up", sp(50, 100, 100, 200) === 100);
+		check("size: above max clamps down", sp(999, 100, 100, 200) === 200);
+		check("size: junk falls back", sp("abc", 100, 80, 160) === 100);
+		check("size: guide range floor 80", sp(10, 100, 80, 160) === 80);
+
+		// Overlay text size actually scales the rendered card (canvas + ctx.scale).
+		var tos = window.__rs3qh.testOverlayCard;
+		window.__rs3qh.setOverlayScale(100);
+		var cardBase = tos(false);
+		check("overlay: default card is 440px wide", cardBase.width === 440);
+		window.__rs3qh.setOverlayScale(150);
+		var cardBig = tos(false);
+		check("overlay: 150% renders the card at 660px", cardBig.width === 660);
+		window.__rs3qh.setOverlayScale(100);
+
 		// Quest-name normalisation (RuneMetrics <-> wiki title matching).
 		var nn = window.__rs3qh.normName;
 		check("norm: miniquest suffix", nn("Doric's Task I (miniquest)") === nn("Doric's Task I"));
