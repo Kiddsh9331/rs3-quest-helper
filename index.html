@@ -137,15 +137,13 @@
 				</select>
 			</div>
 			<div class="settings-row">
-				<label for="panel-opacity">App opacity</label>
-				<input id="panel-opacity" type="range" min="30" max="100" step="1" title="100% = solid; drag left to make the app panel more see-through">
-				<span id="panel-opacity-value">100%</span>
+				<label for="overlay-bg">Overlay background</label>
+				<select id="overlay-bg" title="Alt1 cannot blend a partly see-through card with the game, so this is all or nothing">
+					<option value="solid">Solid card</option>
+					<option value="off">Off (text only)</option>
+				</select>
 			</div>
-			<div class="settings-row">
-				<label for="overlay-opacity">Overlay opacity</label>
-				<input id="overlay-opacity" type="range" min="0" max="100" step="1" title="100% = solid card; drag all the way left to drop the background so just the border and text float over the game">
-				<span id="overlay-opacity-value">86%</span>
-			</div>
+			<div class="settings-note">Alt1 draws the overlay onto the game and can&rsquo;t blend a half-transparent card with it, so the background is either solid or off. With it off, only the step text and border are drawn and you see the game behind them.</div>
 			<div class="settings-row">
 				<label for="overlay-size">Overlay text size</label>
 				<input id="overlay-size" type="range" min="100" max="200" step="10" title="Make the on-screen overlay card bigger — helps when the game is at a high resolution and it looks tiny">

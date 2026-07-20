@@ -362,20 +362,15 @@
 		if (t === "dark") document.documentElement.removeAttribute("data-theme");
 		else document.documentElement.setAttribute("data-theme", t);
 	}
-	function opacityPercent(value, fallback) {
-		var n = parseInt(value, 10);
-		return isNaN(n) ? fallback : Math.max(30, Math.min(100, n));
-	}
-	function applyPanelOpacity() {
-		document.documentElement.style.setProperty("--app-alpha",
-			String(opacityPercent(prefs.panelOpacity, 100) / 100));
+	// The overlay card's background is all-or-nothing: Alt1 draws overlays onto
+	// the game WITHOUT blending partial alpha, so a half-transparent card comes
+	// out pale/white instead of showing the game. Fully opaque and fully
+	// transparent are the only two that render correctly.
+	function overlayBgOff() {
+		return prefs.overlayBg === "off";
 	}
 	function overlayOpacity() {
-		// 0 allowed: a transparent card background is the one see-through the
-		// Alt1 overlay can render (semi-transparent pixels composite against
-		// black, but fully transparent ones let the game show, so the border
-		// and text float). The app panel keeps a 30% floor elsewhere.
-		return sizePercent(prefs.overlayOpacity, 86, 0, 100) / 100;
+		return overlayBgOff() ? 0 : 1;
 	}
 	// Size sliders (percent). Overlay: the on-screen card is drawn on a
 	// raw-pixel canvas, so it does NOT get Windows DPI scaling and looks tiny
@@ -1170,7 +1165,9 @@
 		ctx.lineTo(0, r); ctx.arcTo(0, 0, r, 0, r);
 		ctx.fillStyle = "rgba(18, 22, 18, " + overlayOpacity() + ")";
 		ctx.fill();
-		ctx.strokeStyle = "rgba(231, 193, 90, 0.9)";
+		// Fully opaque: any partial alpha renders pale over the game once the
+		// card background is off, so the border must not be semi-transparent.
+		ctx.strokeStyle = "rgb(231, 193, 90)";
 		ctx.lineWidth = 1.5;
 		ctx.stroke();
 
@@ -3372,7 +3369,6 @@
 
 	function init() {
 		applyTheme();
-		applyPanelOpacity();
 		applyAppTextScale();
 		document.getElementById("search").addEventListener("input", renderList);
 		document.getElementById("btn-home").addEventListener("click", goHome);
@@ -3457,30 +3453,12 @@
 			applyTheme();
 		});
 
-		// Overlay allows 0% (background fully gone → text floats over the game,
-		// the only see-through Alt1 can actually render); the app window keeps a
-		// 30% floor so it never becomes unusably invisible.
-		[
-			{ kind: "overlay", def: 86, min: 0 },
-			{ kind: "panel", def: 100, min: 30 }
-		].forEach(function (cfg) {
-			var kind = cfg.kind;
-			var field = kind + "-opacity";
-			var value = document.getElementById(field + "-value");
-			var input = document.getElementById(field);
-			function refreshOpacity() {
-				var pct = sizePercent(prefs[kind + "Opacity"], cfg.def, cfg.min, 100);
-				input.value = pct;
-				value.textContent = pct + "%";
-			}
-			refreshOpacity();
-			input.addEventListener("input", function () {
-				prefs[kind + "Opacity"] = sizePercent(input.value, cfg.def, cfg.min, 100);
-				store(PREFS_KEY, prefs);
-				refreshOpacity();
-				if (kind === "panel") applyPanelOpacity();
-				else if (overlayTimer) paintOverlay();
-			});
+		var overlayBg = document.getElementById("overlay-bg");
+		overlayBg.value = overlayBgOff() ? "off" : "solid";
+		overlayBg.addEventListener("change", function () {
+			prefs.overlayBg = overlayBg.value;
+			store(PREFS_KEY, prefs);
+			if (overlayTimer) paintOverlay();
 		});
 
 		[
@@ -3856,7 +3834,7 @@
 		floorPrefForLocale: floorPrefForLocale,
 		setFloorPref: function (v) { prefs.floors = v; },
 		setOverlayScale: function (v) { prefs.overlayScale = v; },
-		setOverlayOpacity: function (v) { prefs.overlayOpacity = v; },
+		setOverlayBg: function (v) { prefs.overlayBg = v; },
 		// Simulate an Alt+1 press (advanceStep with the hotkey flag) on a
 		// two-step guide and report the current step before/after, so the
 		// hotkey->advance path is testable headless (Alt1's actual event

@@ -285,20 +285,33 @@
 		check("overlay: 150% renders the card at 660px", cardBig.width === 660);
 		window.__rs3qh.setOverlayScale(100);
 
-		// Overlay opacity 0% clears the card background (game shows through,
-		// only border + text remain); 100% is a solid card.
+		// Overlay background is all-or-nothing (Alt1 won't blend partial alpha
+		// with the game): "off" clears the card so the game shows through and
+		// only border + text remain; "solid" is a fully opaque card.
 		function transparentPixels(img) {
 			var n = 0;
 			for (var i = 3; i < img.data.length; i += 4) if (img.data[i] === 0) n++;
 			return n;
 		}
-		window.__rs3qh.setOverlayOpacity(100);
-		var solidCard = transparentPixels(tos(false));
-		window.__rs3qh.setOverlayOpacity(0);
-		var clearCard = transparentPixels(tos(false));
-		check("overlay opacity 0% clears the background", clearCard > solidCard + 2000);
-		check("overlay opacity 100% is a solid card", solidCard < 1500);
-		window.__rs3qh.setOverlayOpacity(86);
+		function partialAlphaPixels(img) {
+			var n = 0;
+			for (var i = 3; i < img.data.length; i += 4) {
+				if (img.data[i] > 0 && img.data[i] < 255) n++;
+			}
+			return n;
+		}
+		window.__rs3qh.setOverlayBg("solid");
+		var solidImg = tos(false);
+		var solidCard = transparentPixels(solidImg);
+		window.__rs3qh.setOverlayBg("off");
+		var clearImg = tos(false);
+		var clearCard = transparentPixels(clearImg);
+		check("overlay background off clears the card", clearCard > solidCard + 2000);
+		check("overlay background solid is opaque", solidCard < 1500);
+		// The card body must be fully opaque or fully clear — a half blend renders
+		// pale over the game, so only anti-aliased text/border edges may be partial.
+		check("overlay solid card has no washed-out body", partialAlphaPixels(solidImg) < solidImg.width * solidImg.height * 0.1);
+		window.__rs3qh.setOverlayBg("solid");
 
 		// Quest-name normalisation (RuneMetrics <-> wiki title matching).
 		var nn = window.__rs3qh.normName;
