@@ -19,7 +19,7 @@
 	var OVERLAY_REFRESH_MS = 10000; // Alt1 overlays expire; repaint every 10s.
 
 	var RM_URL = "https://apps.runescape.com/runemetrics/quests?user=";
-	var RM_CACHE_KEY = "rs3qh-rm-v1";
+	var RM_CACHE_KEY = "rs3qh-rm-v2";
 	var RM_TTL_MS = 30 * 60 * 1000;
 	var ORDER_CACHE_KEY = "rs3qh-order-v1";
 	var ORDER_TTL_MS = 7 * 24 * 3600 * 1000;
@@ -35,6 +35,7 @@
 	var progress = load(PROGRESS_KEY, {});
 	var prefs = load(PREFS_KEY, { rsn: "", hideDone: false, sort: "az" });
 	var rmStatuses = null;  // { normalised quest name: "COMPLETED" | "STARTED" | "NOT_STARTED" }
+	var rmEligible = null;  // { normalised quest name: true when requirements are met }
 	var optimalRank = null; // { normalised quest name: position in progression guide }
 	var timelineRank = null; // { normalised quest name: position in the timeline list }
 	var currentQuestTitle = null; // wiki title of the open guide, for reloads
@@ -245,11 +246,15 @@
 			}
 		}
 		if (!data || !data.quests || !data.quests.length) return null;
-		var statuses = {};
+		var statuses = {}, eligible = {};
 		data.quests.forEach(function (q) {
-			statuses[normName(q.title)] = q.status;
+			var key = normName(q.title);
+			statuses[key] = q.status;
+			// userEligible is Jagex's own "meets the requirements" flag, so
+			// eligibility never has to be guessed from skill/quest reqs.
+			eligible[key] = q.userEligible === true;
 		});
-		return statuses;
+		return { statuses: statuses, eligible: eligible };
 	}
 
 	// RuneMetrics sends no CORS headers, so a direct request only works in
@@ -269,7 +274,7 @@
 	function fetchRuneMetrics(name, force, cb, errcb) {
 		var cached = load(RM_CACHE_KEY, null);
 		if (!force && cached && cached.name === name && Date.now() - cached.ts < RM_TTL_MS) {
-			cb(cached.statuses);
+			cb({ statuses: cached.statuses, eligible: cached.eligible || null });
 			return;
 		}
 		var urls = rmUrls(name);
@@ -282,10 +287,11 @@
 			xhr.open("GET", urls[i]);
 			xhr.timeout = 10000;
 			xhr.onload = function () {
-				var statuses = parseRmPayload(xhr.responseText);
-				if (statuses) {
-					store(RM_CACHE_KEY, { ts: Date.now(), name: name, statuses: statuses });
-					cb(statuses);
+				var parsed = parseRmPayload(xhr.responseText);
+				if (parsed) {
+					store(RM_CACHE_KEY, { ts: Date.now(), name: name,
+						statuses: parsed.statuses, eligible: parsed.eligible });
+					cb(parsed);
 				} else if (i === 0 && xhr.status === 200) {
 					// Direct request answered but without quests: private profile.
 					errcb("RuneMetrics returned no quests — is the profile set to private? (RuneMetrics settings in game)");
@@ -2790,6 +2796,13 @@
 		return rmStatuses ? rmStatuses[normName(q.name)] || null : null;
 	}
 
+	// "Can do now": RuneMetrics says the requirements are met (userEligible)
+	// and it isn't already finished. Quests already in progress still count,
+	// since you can carry on with them.
+	function canDoNow(status, eligible) {
+		return eligible === true && status !== "COMPLETED";
+	}
+
 	// The rank map behind the current sort mode, if one applies and loaded.
 	function activeRank() {
 		if (prefs.sort === "optimal") return optimalRank;
@@ -2832,6 +2845,8 @@
 			if (filter && q.name.toLowerCase().indexOf(filter) === -1) return;
 			var status = questStatus(q);
 			if (prefs.hideDone && status === "COMPLETED") { hidden++; return; }
+			if (prefs.eligibleOnly && rmEligible &&
+				!canDoNow(status, rmEligible[normName(q.name)])) { hidden++; return; }
 			shown++;
 			var row = el("div", "quest-row");
 			if (rankMap) {
@@ -2850,9 +2865,18 @@
 			row.addEventListener("click", function () { openQuest(q.title); });
 			main.appendChild(row);
 		});
+		// The filter needs Jagex's eligibility flags, which only arrive with a
+		// RuneMetrics sync — say so rather than silently showing everything.
+		if (prefs.eligibleOnly && !rmEligible) {
+			main.appendChild(el("div", "status",
+				"\"Can do now\" needs your RuneMetrics data — enter your name above and hit Sync."));
+		}
 		if (!shown) {
 			main.appendChild(el("div", "status", filter ? "No quests match \"" + filter + "\"." :
-				(hidden ? "All " + hidden + " matching quests are completed — untick \"Hide done\" to see them." : "Quest list is empty.")));
+				hidden ? (prefs.eligibleOnly
+					? "No quests you can start right now — untick \"Can do now\" to see the rest."
+					: "All " + hidden + " matching quests are completed — untick \"Hide done\" to see them.")
+				: "Quest list is empty."));
 		}
 	}
 
@@ -3263,10 +3287,11 @@
 
 	// ---------- wiring ----------
 
-	function applyRmStatuses(statuses, name, how) {
-		rmStatuses = statuses;
+	function applyRmStatuses(parsed, name, how) {
+		rmStatuses = parsed.statuses;
+		rmEligible = parsed.eligible || null;
 		var done = 0;
-		Object.keys(statuses).forEach(function (k) { if (statuses[k] === "COMPLETED") done++; });
+		Object.keys(rmStatuses).forEach(function (k) { if (rmStatuses[k] === "COMPLETED") done++; });
 		setStatus("sync-status", (how || "Synced") + ": " + done + " quests completed on " + name + ".");
 		show("rm-import", false);
 		renderList();
@@ -3281,8 +3306,8 @@
 		prefs.rsn = name;
 		store(PREFS_KEY, prefs);
 		setStatus("sync-status", "Fetching quest statuses for " + name + "…");
-		fetchRuneMetrics(name, force, function (statuses) {
-			applyRmStatuses(statuses, name);
+		fetchRuneMetrics(name, force, function (parsed) {
+			applyRmStatuses(parsed, name);
 		}, function (msg) {
 			setStatus("sync-status", msg);
 			// Offer the always-works manual path.
@@ -3299,8 +3324,8 @@
 		var name = (prefs.rsn || "").trim();
 		if (!name) return;
 		setStatus("sync-status", "Syncing quest statuses for " + name + "…");
-		fetchRuneMetrics(name, false, function (statuses) {
-			applyRmStatuses(statuses, name, "Auto-synced");
+		fetchRuneMetrics(name, false, function (parsed) {
+			applyRmStatuses(parsed, name, "Auto-synced");
 		}, function () {
 			setStatus("sync-status", rmStatuses
 				? "Auto-sync failed — showing the last synced quest statuses."
@@ -3354,9 +3379,11 @@
 
 		var rsnInput = document.getElementById("rsn");
 		var hideDone = document.getElementById("hide-done");
+		var eligibleOnly = document.getElementById("eligible-only");
 		var sortMode = document.getElementById("sort-mode");
 		rsnInput.value = prefs.rsn || "";
 		hideDone.checked = !!prefs.hideDone;
+		eligibleOnly.checked = !!prefs.eligibleOnly;
 		sortMode.value = prefs.sort || "az";
 
 		document.getElementById("btn-sync").addEventListener("click", function () { syncRuneMetrics(true); });
@@ -3365,20 +3392,26 @@
 		});
 		document.getElementById("btn-rm-import").addEventListener("click", function () {
 			var name = rsnInput.value.trim() || prefs.rsn || "manual import";
-			var statuses = parseRmPayload(document.getElementById("rm-json").value.trim());
-			if (!statuses) {
+			var parsed = parseRmPayload(document.getElementById("rm-json").value.trim());
+			if (!parsed) {
 				setStatus("sync-status", "That text does not look like RuneMetrics quest data — copy the whole page, starting with {\"quests\":[");
 				return;
 			}
-			store(RM_CACHE_KEY, { ts: Date.now(), name: name, statuses: statuses });
+			store(RM_CACHE_KEY, { ts: Date.now(), name: name,
+				statuses: parsed.statuses, eligible: parsed.eligible });
 			document.getElementById("rm-json").value = "";
-			applyRmStatuses(statuses, name, "Imported");
+			applyRmStatuses(parsed, name, "Imported");
 		});
 		document.getElementById("btn-rm-cancel").addEventListener("click", function () {
 			show("rm-import", false);
 		});
 		hideDone.addEventListener("change", function () {
 			prefs.hideDone = hideDone.checked;
+			store(PREFS_KEY, prefs);
+			renderList();
+		});
+		eligibleOnly.addEventListener("change", function () {
+			prefs.eligibleOnly = eligibleOnly.checked;
 			store(PREFS_KEY, prefs);
 			renderList();
 		});
@@ -3741,7 +3774,10 @@
 			// Restore cached RuneMetrics statuses and preferred sort, then
 			// refresh the statuses automatically for the saved name.
 			var rmCached = load(RM_CACHE_KEY, null);
-			if (rmCached && rmCached.name === prefs.rsn) rmStatuses = rmCached.statuses;
+			if (rmCached && rmCached.name === prefs.rsn) {
+				rmStatuses = rmCached.statuses;
+				rmEligible = rmCached.eligible || null;
+			}
 			loadSortData();
 			renderList();
 			autoSyncRuneMetrics();
@@ -3783,6 +3819,7 @@
 		autoTickBlockedBySubs: autoTickBlockedBySubs,
 		normName: normName,
 		parseRmPayload: parseRmPayload,
+		canDoNow: canDoNow,
 		testOverlayCard: function (withSubs) {
 			var gsave = guide, fsave = flatSteps, testTitle = "__rs3qh_overlay_test__";
 			var savedProgress = progress[testTitle];

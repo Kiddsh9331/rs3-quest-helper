@@ -312,19 +312,37 @@
 
 		// RuneMetrics payload parsing (fetch and manual import share this).
 		var rm = window.__rs3qh.parseRmPayload;
-		var st = rm('{"quests":[{"title":"Cook\'s Assistant","status":"COMPLETED"},{"title":"Dragon Slayer","status":"STARTED"}]}');
-		check("rm: parses statuses", !!st && st[nn("Cook's Assistant")] === "COMPLETED" && st[nn("Dragon Slayer")] === "STARTED");
+		var st = rm('{"quests":[{"title":"Cook\'s Assistant","status":"COMPLETED","userEligible":true},{"title":"Dragon Slayer","status":"STARTED","userEligible":true}]}');
+		check("rm: parses statuses", !!st && st.statuses[nn("Cook's Assistant")] === "COMPLETED" && st.statuses[nn("Dragon Slayer")] === "STARTED");
 		check("rm: rejects html", rm("<html>error page</html>") === null);
 		check("rm: rejects empty quests", rm('{"quests":[]}') === null);
 		check("rm: rejects other json", rm('{"error":"NO_PROFILE"}') === null);
 		var wrapped = rm('Title: quests\nURL: x\n\n{"quests":[{"title":"Demon Slayer","status":"COMPLETED"}]} trailing');
-		check("rm: unwraps proxy-wrapped payload", !!wrapped && wrapped[nn("Demon Slayer")] === "COMPLETED");
+		check("rm: unwraps proxy-wrapped payload", !!wrapped && wrapped.statuses[nn("Demon Slayer")] === "COMPLETED");
+
+		// Eligibility comes straight from Jagex's userEligible flag.
+		var elig = rm('{"quests":[{"title":"Cook\'s Assistant","status":"COMPLETED","userEligible":true},{"title":"Dragon Slayer","status":"NOT_STARTED","userEligible":true},{"title":"Nomad\'s Requiem","status":"NOT_STARTED","userEligible":false}]}');
+		check("rm: captures userEligible", elig.eligible[nn("Dragon Slayer")] === true && elig.eligible[nn("Nomad's Requiem")] === false);
+		check("rm: missing userEligible is not eligible", wrapped.eligible[nn("Demon Slayer")] === false);
+
+		// "Can do now" = requirements met AND not already finished; a quest
+		// already in progress still counts.
+		var cdn = window.__rs3qh.canDoNow;
+		check("eligible: startable quest passes", cdn("NOT_STARTED", true) === true);
+		check("eligible: in-progress quest passes", cdn("STARTED", true) === true);
+		check("eligible: completed quest is excluded", cdn("COMPLETED", true) === false);
+		check("eligible: requirements not met is excluded", cdn("NOT_STARTED", false) === false);
+		check("eligible: unknown eligibility is excluded", cdn("NOT_STARTED", undefined) === false);
 
 		// Live end-to-end: fetch real statuses through the fallback chain.
-		window.__rs3qh.fetchRuneMetrics("Kiddsh_GIM", true, function (statuses) {
-			var n = Object.keys(statuses).length;
+		window.__rs3qh.fetchRuneMetrics("Kiddsh_GIM", true, function (parsed) {
+			var n = Object.keys(parsed.statuses).length;
+			var canDo = Object.keys(parsed.eligible || {}).filter(function (k) {
+				return parsed.eligible[k] && parsed.statuses[k] !== "COMPLETED";
+			}).length;
 			document.getElementById("results").textContent +=
-				"\nLIVE rm sync OK: " + n + " quests" + (statuses[nn("Cook's Assistant")] === "COMPLETED" ? " (Cook's Assistant COMPLETED)" : "");
+				"\nLIVE rm sync OK: " + n + " quests" + (parsed.statuses[nn("Cook's Assistant")] === "COMPLETED" ? " (Cook's Assistant COMPLETED)" : "") +
+				", " + canDo + " can do now";
 		}, function (msg) {
 			document.getElementById("results").textContent += "\nLIVE rm sync FAILED: " + msg;
 		});
