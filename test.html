@@ -266,6 +266,39 @@
 		res = co("rms", false, null, 1, null);
 		check("seqgate: uninterrupted chain ticks on first end", !!res && !res.held && !res.none && res.subIndex === null);
 
+		// LET THEM EAT PIE: chat is "Any / 2 I think I've had enough" — the
+		// final pick comes AFTER a cutscene. The "Any" screens match no
+		// specific pick (index -1), but the chain still has a real last pick,
+		// so a cutscene that ends the conversation must HOLD, not tick, until
+		// that pick is seen. (Previously the gate only armed on a matched pick,
+		// so the cutscene ticked the step early.)
+		check("seqgate: 'Any' prefix still exposes a final pick", lmc("Any / 2 I think I've had enough, thanks.") === 1);
+		// pre-cutscene: only "Any" matches (index -1), chain last = 1
+		co("pie", true, ev("pie"), 1, { index: -1, last: 1 });
+		co("pie", true, ev("pie"), 1, { index: -1, last: 1 });
+		co("pie", false, null, 1, null); co("pie", false, null, 1, null);
+		res = co("pie", false, null, 1, null);
+		check("pie: cutscene mid-'Any'-chain holds instead of ticking", !!res && res.held === true);
+		// after the cutscene the numbered pick shows and is chosen
+		co("pie", true, ev("pie"), 1, { index: 1, last: 1 });
+		co("pie", true, ev("pie"), 1, { index: 1, last: 1 });
+		co("pie", false, null, 1, null); co("pie", false, null, 1, null);
+		res = co("pie", false, null, 1, null);
+		check("pie: ticks only after the post-cutscene pick", !!res && !res.held && !res.none && res.subIndex === null);
+
+		// SAFETY VALVE for the 'Any' case: if the final pick never appears,
+		// the step still completes after a stalled hold rather than sticking.
+		co("pie2", true, ev("pie2"), 1, { index: -1, last: 1 });
+		co("pie2", true, ev("pie2"), 1, { index: -1, last: 1 });
+		co("pie2", false, null, 1, null); co("pie2", false, null, 1, null);
+		res = co("pie2", false, null, 1, null);
+		check("pie2: first vanish holds", !!res && res.held === true);
+		co("pie2", true, ev("pie2"), 1, { index: -1, last: 1 });
+		co("pie2", true, ev("pie2"), 1, { index: -1, last: 1 });
+		co("pie2", false, null, 1, null); co("pie2", false, null, 1, null);
+		res = co("pie2", false, null, 1, null);
+		check("pie2: no-progress second vanish completes", !!res && !res.held && res.subIndex === null);
+
 		// Size sliders (overlay/guide text scaling) clamp to their range and
 		// fall back cleanly on junk input.
 		var sp = window.__rs3qh.sizePercent;

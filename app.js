@@ -1378,13 +1378,17 @@
 					required > convo.required) {
 					convo.required = required;
 				}
-				// Track how far through a gated multi-pick chain we've got.
-				// Only a positively-matched pick (index >= 0) arms the gate, so
-				// an "Any" screen that matched no specific candidate never
-				// forces the step to wait for a pick it will never see.
-				if (seq && seq.index >= 0 && seq.last >= 0) {
+				// Track how far through a gated chain we've got. The chain
+				// simply HAVING a real last pick (seq.last >= 0) arms the gate,
+				// even while only "Any" has matched so far — so a step whose
+				// final pick comes after a cutscene (Let Them Eat Pie: "Any / 2
+				// I think I've had enough") is not ticked early when the
+				// cutscene ends the conversation. maxSeq only advances on a
+				// positively matched pick; if that last pick never appears, the
+				// stall valve completes the step after a couple of holds.
+				if (seq && seq.last >= 0) {
 					convo.lastSeq = seq.last;
-					if (seq.index > convo.maxSeq) convo.maxSeq = seq.index;
+					if (seq.index >= 0 && seq.index > convo.maxSeq) convo.maxSeq = seq.index;
 				}
 			}
 			return null;
