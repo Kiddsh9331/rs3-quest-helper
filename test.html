@@ -746,6 +746,11 @@
 		check("prose tip: recommended item still listed", tipSec.needed.some(function (n) { return /Food and armour/.test(n); }));
 		check("prose tip: attached as the first step's note", /auto-retaliate/.test(tipSec.steps[0].note || ""));
 
+		// Land of the Goblins: {{Fairycode|AJQ}} keeps the fairy-ring code.
+		var gFairy = window.__rs3qh.parseQuickGuide(
+			"==S==\n{{Checklist|\n* Head south using fairy code {{Fairycode|AJQ}}.\n}}\n");
+		check("fairycode: code kept in step text", /using fairy code AJQ\./.test(gFairy.sections[0].steps[0].text));
+
 		// Efficient Ironman Pathway: steps come from static-row-header-step
 		// table rows (Activity | Notes | Level); other tables and the
 		// Miniguides half are skipped.

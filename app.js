@@ -561,6 +561,10 @@
 				out = args[0] || "";
 			} else if (name === "coins") {
 				out = (args[0] || "") + " coins";
+			} else if (name === "fairycode" || name === "fairy code" || name === "fairyring") {
+				// {{Fairycode|AJQ}} is a fairy-ring destination code — keep the
+				// letters so "using fairy code AJQ" survives.
+				out = (args[0] || "").toUpperCase();
 			} else if (name === "floornumber") {
 				out = floorText(args[0], floorPref());
 			} else if (name === "questicon" || name === "questlink" || name === "questreq") {
