@@ -705,6 +705,47 @@
 				return (s.text + " " + (s.note || "")).indexOf(".png") === -1;
 			}));
 
+		// Another Slice of H.A.M.: {{Iconlink}} keeps its label, {{Map|x:..,y:..}}
+		// becomes a map chip, and no empty "()" is left behind.
+		var gIcon = window.__rs3qh.parseQuickGuide(
+			"==S==\n{{Checklist|\n* Head west until you find a {{Iconlink|Transportation map|txt=transportation map icon}} ({{Map|x:103,y:93|mapID=26|type=maplink}}).\n}}\n");
+		var iconStep = gIcon.sections[0].steps[0];
+		check("iconlink+map: reads cleanly, no empty parens",
+			/find a transportation map icon\.$/.test(iconStep.text) && iconStep.text.indexOf("()") === -1);
+		check("iconlink+map: x:/y: coords captured",
+			iconStep.maps.length === 1 && iconStep.maps[0].x === 103 && iconStep.maps[0].y === 93);
+
+		// Enakhra's Lament: {{Skillreq|Mining|35}} keeps its level in the
+		// recommended list ("... (to mine sandstone)").
+		var qdSkill = window.__rs3qh.parseQuestDetails(
+			"{{Quest details\n|items=\n|recommended=* {{Skillreq|Mining|35}} (to mine [[sandstone]])\n}}");
+		check("skillreq: level kept in recommended",
+			qdSkill.recommended.length === 1 && /Level 35 Mining/.test(qdSkill.recommended[0].text) && /sandstone/.test(qdSkill.recommended[0].text));
+
+		// Enlightened Journey: {{Achievement|Engage}} shows its name instead of
+		// a bare "Medium -".
+		var gAch = window.__rs3qh.parseQuickGuide(
+			"==Achievements==\n* '''[[Varrock achievements]]'''\n** ''Medium'' - {{Achievement|Engage}}\n");
+		check("achievement: name rendered", gAch.sections[0].steps[0].sub.some(function (s) { return /Engage/.test(s.text); }));
+
+		// Enlightened Journey scene table: cell attributes (align/width) and the
+		// File icons don't leak; the button counts survive.
+		var gScene = window.__rs3qh.parseQuickGuide(
+			"==First scene==\n{| class=\"lighttable\" width=\"250\"\n| align=\"center\" width=\"100\" | [[File:icon.png|x26px|link=]]\n| '''1''' Sandbags\n|-\n| align=\"center\" | [[File:relax.png|x18px|link=]]\n| '''9''' Relax\n|}\n");
+		var sceneSubs = (gScene.sections[0].steps[0].sub || []).map(function (s) { return s.text; });
+		check("scene table: button counts kept", sceneSubs.indexOf("1 Sandbags") !== -1 && sceneSubs.indexOf("9 Relax") !== -1);
+		check("scene table: no attr/File leak", sceneSubs.every(function (t) { return !/align=|width=|File:/.test(t); }));
+
+		// Ritual of the Mahjarrat: a "highly recommended…" tip before the first
+		// step becomes that step's note, not an Items-needed entry; the real
+		// {{Needed|recommended=…}} item is still listed.
+		var gTip = window.__rs3qh.parseQuickGuide(
+			"==The mighty jungle==\n{{Needed|recommended=Food and armour}}\n:It is highly recommended to have auto-retaliate off.\n{{Checklist|\n* Talk to Sir Tendeth.\n}}\n");
+		var tipSec = gTip.sections[0];
+		check("prose tip: not dumped into items-needed", tipSec.needed.every(function (n) { return n.indexOf("auto-retaliate") === -1; }));
+		check("prose tip: recommended item still listed", tipSec.needed.some(function (n) { return /Food and armour/.test(n); }));
+		check("prose tip: attached as the first step's note", /auto-retaliate/.test(tipSec.steps[0].note || ""));
+
 		// Efficient Ironman Pathway: steps come from static-row-header-step
 		// table rows (Activity | Notes | Level); other tables and the
 		// Miniguides half are skipped.

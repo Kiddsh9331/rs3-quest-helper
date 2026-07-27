@@ -500,13 +500,19 @@
 		return null;
 	}
 
-	// Map templates carry "x, y" coords plus optional plane/mapID params.
+	// Map templates carry "x, y" coords plus optional plane/mapID params. The
+	// coords come either as a bare "103,93" arg or an "x:103,y:93" one.
 	function mapSentinel(parts, args) {
 		var coords = null;
 		args.forEach(function (a) {
-			var c = /^(\d{1,5})\s*,\s*(\d{1,5})$/.exec(a);
+			var c = /^(\d{1,5})\s*,\s*(\d{1,5})$/.exec(a) ||
+				/^x:\s*(\d{1,5})\s*,\s*y:\s*(\d{1,5})$/i.exec(a);
 			if (c) coords = { x: +c[1], y: +c[2] };
 		});
+		if (!coords) {
+			var nx = namedParam(parts, "x"), ny = namedParam(parts, "y");
+			if (nx && ny && /^\d{1,5}$/.test(nx) && /^\d{1,5}$/.test(ny)) coords = { x: +nx, y: +ny };
+		}
 		if (!coords) return "";
 		var plane = namedParam(parts, "plane") || "0";
 		var mapId = namedParam(parts, "mapid") || "-1";
@@ -526,6 +532,9 @@
 				out = CHAT_OPEN + args.join(" / ") + CHAT_CLOSE;
 			} else if (name === "needed" || name === "recommended") {
 				var src = args.join(", ");
+				// {{Needed|recommended=Food and armour}} carries its list in a
+				// named param, so unnamed args come back empty — pull it out.
+				if (!src) src = namedParam(parts, "recommended") || "";
 				out = NEEDED_MARK + (name === "recommended" ? "Recommended: " : "") + src;
 				// Item links inside Needed lines are exact wiki page names —
 				// keep them (with the required amount, when the guide gives
@@ -561,6 +570,20 @@
 			} else if (name === "sc" || name === "scp") {
 				// {{sc|Prayer}} / {{scp|Prayer|3}} skill icons -> plain text.
 				out = (args[0] || "") + (args[1] ? " " + args[1] : "");
+			} else if (name === "skillreq" || name === "skill req") {
+				// {{Skillreq|Mining|35}} -> "Level 35 Mining". Recommended lists
+				// chain a note after it: "... (to mine sandstone)".
+				out = args[0] ? (args[1] ? "Level " + args[1] + " " + args[0] : args[0]) : "";
+			} else if (name === "achievement") {
+				// {{Achievement|Engage}} names an achievement — keep it as a
+				// readable link instead of dropping it to a bare "Medium -".
+				out = args[0] ? LINK_OPEN + args[0] + "|" +
+					args[0].replace(/\s*\(achievement\)$/i, "") + LINK_CLOSE : "";
+			} else if (name === "iconlink") {
+				// Decorative icon + link ("transportation map icon"); keep its
+				// label so the sentence still reads ("find a …"), then the map
+				// link beside it carries the coordinates.
+				out = namedParam(parts, "txt") || args[0] || "";
 			} else if (name === "sq" || name === "!") {
 				out = "|";
 			} else if (name === "npc map" || name === "object map" || name === "map" || name === "maplink") {
@@ -693,6 +716,10 @@
 		// Scrub any leftover sentinel fragments (e.g. from wiki markup that
 		// splits a sentinel across lines) so they never reach the UI.
 		text = text.replace(/@@[CMIPL]\[|\][CMIPL]@@|@@NEEDED@@/g, "");
+		// A dropped icon or an extracted map inside parentheses ("find a icon
+		// (map).") leaves empty brackets behind — remove them, then tidy any
+		// stray space before punctuation the removal exposes.
+		text = text.replace(/\(\s*\)/g, " ").replace(/\s+([.,!?;:])/g, "$1");
 		return {
 			text: text.replace(/\s+/g, " ").trim(),
 			chat: chat.join(" / ") || null,
@@ -703,13 +730,30 @@
 		};
 	}
 
+	// A wikitable cell may lead with HTML attributes separated from its
+	// content by a single top-level pipe: `align="center" width="100" |
+	// [[File:…]]`. Drop the attribute half so it doesn't leak into the row.
+	function stripCellAttrs(cell) {
+		var depth = 0;
+		for (var i = 0; i < cell.length; i++) {
+			var two = cell.substr(i, 2);
+			if (two === "[[" || two === "{{") { depth++; i++; }
+			else if (two === "]]" || two === "}}") { depth--; i++; }
+			else if (cell[i] === "|" && depth === 0) {
+				var left = cell.slice(0, i);
+				return (/=/.test(left) && !/\[\[|\{\{/.test(left)) ? cell.slice(i + 1) : cell;
+			}
+		}
+		return cell;
+	}
+
 	// Parse a wikitable block (array of raw lines) into display rows.
 	function parseTable(lines) {
 		var rows = [], cells = [];
 		function flush() {
 			var texts = [], maps = [];
 			cells.forEach(function (c) {
-				var parsed = extractChat(cleanMarkup(resolveTemplates(c)));
+				var parsed = extractChat(cleanMarkup(resolveTemplates(stripCellAttrs(c))));
 				if (parsed.text) texts.push(parsed.text);
 				maps = maps.concat(parsed.maps);
 			});
@@ -733,6 +777,10 @@
 	function parseQuickGuide(wikitext) {
 		var sections = [];
 		var current = null;
+		// Prose that appears in a section BEFORE its first step (a "highly
+		// recommended…" tip under a {{Needed}}). Held here and attached to the
+		// first step as a note, instead of leaking into the Items-needed list.
+		var pendingNote = "";
 		var lines = wikitext.split("\n");
 		var i;
 
@@ -755,10 +803,19 @@
 		function newSection(title) {
 			current = { title: title, needed: [], steps: [], images: [] };
 			sections.push(current);
+			pendingNote = "";
 		}
 
 		function lastStep() {
 			return current && current.steps.length ? current.steps[current.steps.length - 1] : null;
+		}
+
+		// A section that never got a step keeps its buffered tip as info (so a
+		// note-only section isn't lost); otherwise the first step already took
+		// it. Called when a section ends.
+		function flushPending() {
+			if (pendingNote && current && !current.steps.length) current.needed.push(pendingNote);
+			pendingNote = "";
 		}
 
 		// Templates like {{Checklist|...}} span multiple lines, so resolve
@@ -771,6 +828,7 @@
 
 			var h = /^==+\s*(.*?)\s*=+=$/.exec(trimmed);
 			if (h) {
+				flushPending();
 				var title = extractChat(h[1]).text;
 				if (/^(overview|rewards?|required items|credits)$/i.test(title)) current = null;
 				else newSection(title);
@@ -808,7 +866,10 @@
 				var parsedLine = extractChat(b[2]);
 				if (!parsedLine.text && !parsedLine.chat && !parsedLine.images.length) return;
 				if (depth === 1 || !lastStep()) {
-					current.steps.push({ text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps, images: parsedLine.images, links: parsedLine.links, sub: [] });
+					var step = { text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps, images: parsedLine.images, links: parsedLine.links, sub: [] };
+					// A tip that preceded this section's first step attaches here.
+					if (pendingNote) { step.note = pendingNote; pendingNote = ""; }
+					current.steps.push(step);
 				} else {
 					lastStep().sub.push({ text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps, links: parsedLine.links });
 					if (parsedLine.images.length) {
@@ -818,11 +879,13 @@
 				return;
 			}
 
-			// Loose prose inside a section: attach as a note to the last
-			// step, or keep as a section-level info line. Images on their
-			// own line (the common wiki pattern) belong to the section when
-			// no steps exist yet, otherwise to the latest step.
-			var prose = extractChat(trimmed);
+			// Loose prose inside a section: attach as a note to the last step.
+			// A leading ":"/";" is definition-list indentation (a tip), not
+			// content. Images on their own line belong to the latest step, or
+			// the section when no step exists yet. Prose that arrives BEFORE the
+			// first step is buffered (pendingNote) for that step rather than
+			// dumped into the Items-needed list.
+			var prose = extractChat(trimmed.replace(/^[:;]+\s*/, ""));
 			if (!prose.text && !prose.images.length) return;
 			var stepHost = lastStep();
 			if (stepHost) {
@@ -830,10 +893,11 @@
 				if (prose.maps.length) stepHost.maps = (stepHost.maps || []).concat(prose.maps);
 				if (prose.images.length) stepHost.images = (stepHost.images || []).concat(prose.images);
 			} else {
-				if (prose.text) current.needed.push(prose.text);
+				if (prose.text) pendingNote = (pendingNote ? pendingNote + " " : "") + prose.text;
 				if (prose.images.length) current.images = current.images.concat(prose.images);
 			}
 		});
+		flushPending();
 
 		// Drop sections that ended up with no steps and no info.
 		sections = sections.filter(function (s) { return s.steps.length || s.needed.length || s.images.length; });
