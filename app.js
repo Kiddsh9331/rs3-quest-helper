@@ -1637,7 +1637,7 @@
 	// Goodbye.") the number is the option's position on its OWN screen, so
 	// a text match sitting at a different position (Goodbye at 5, not 4)
 	// belongs to a later screen and must stay silent.
-	function bestOptionFor(cand, opts) {
+	function bestOptionFor(cand, opts, ignoreNumber) {
 		var numMatch = /^(\d)[.)]?\s*(.*)$/.exec(cand);
 		var num = numMatch ? +numMatch[1] : null;
 		var textPart = normOpt(numMatch ? numMatch[2] : cand);
@@ -1652,7 +1652,13 @@
 			if (s > bestScore) { bestScore = s; best = o; bestIdx = i; }
 		});
 		if (!best) return null;
-		if (num !== null && bestIdx + 1 !== num) return null;
+		// The number is the option's position on its screen — enforced so a
+		// chain's text candidate can't grab the same word at a different
+		// position on another screen. ignoreNumber lifts this for a single-pick
+		// step, where there's no chain to confuse and the on-screen number can
+		// differ from the guide's (Duck Quest lists "1 Yes." for confirms that
+		// show Yes second).
+		if (!ignoreNumber && num !== null && bestIdx + 1 !== num) return null;
 		return best;
 	}
 
@@ -1749,11 +1755,19 @@
 				if (!enumerated) break; // sequential chain: only the next pick
 			}
 		}
-		// Forward scan found nothing: try to re-sync on a strong unique match
-		// anywhere in the chain before giving up (see bestChainMatch).
+		// Forward scan found nothing. A single-pick step has no chain to
+		// disambiguate, so trust a clear text match even when the option's
+		// number differs from the guide's; otherwise re-sync on a strong
+		// unique match anywhere in the chain (see bestChainMatch).
 		if (!picked.length) {
-			var fb = bestChainMatch(cands, opts);
-			if (fb) picked = [fb.opt];
+			var real = cands.filter(function (c) { return !/^any$/i.test(c); });
+			if (real.length === 1) {
+				var solo = bestOptionFor(real[0], opts, true);
+				if (solo) picked = [solo];
+			} else {
+				var fb = bestChainMatch(cands, opts);
+				if (fb) picked = [fb.opt];
+			}
 		}
 		// "Any" only means "every option works" when no specific candidate
 		// matched this screen (guides chain "1 Talk about X / Any").
@@ -1810,8 +1824,13 @@
 			}
 			if (opt) return ci;
 		}
-		// Forward scan drifted past the answer — re-sync on a strong unique
-		// match so the sequence pointer (nextCand) recovers too.
+		// Mirror matchOptions' fallbacks: single-pick steps trust the text
+		// match regardless of number; chains re-sync on a strong unique match.
+		var real = [];
+		cands.forEach(function (c, i) { if (!/^any$/i.test(c)) real.push(i); });
+		if (real.length === 1) {
+			return bestOptionFor(cands[real[0]], opts, true) ? real[0] : -1;
+		}
 		var fb = bestChainMatch(cands, opts);
 		return fb ? fb.ci : -1;
 	}

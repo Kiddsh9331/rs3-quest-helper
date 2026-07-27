@@ -605,10 +605,11 @@
 		var sphinxRiddle = [{ text: "8." }, { text: "9." }, { text: "10." }];
 		var sr = window.__rs3qh.matchOptions(sphinxChat, sphinxRiddle, 2);
 		check("sphinx: numeric answer 9 boxed on riddle screen", sr.length === 1 && sr[0] === sphinxRiddle[1]);
-		// A wrong-position numeric answer stays silent (9 sitting at slot 1,
-		// not the stated 2).
-		check("sphinx: numeric answer at wrong position stays silent",
-			window.__rs3qh.matchOptions("2 9.", [{ text: "9." }, { text: "8." }], 0).length === 0);
+		// A wrong-position numeric answer stays silent WITHIN its chain (9
+		// sitting at slot 1, not the stated 2) — the chain still enforces the
+		// number so a stray "9" on another screen isn't boxed.
+		check("sphinx: numeric answer at wrong position stays silent in a chain",
+			window.__rs3qh.matchOptions(sphinxChat, [{ text: "9." }, { text: "8." }], 2).length === 0);
 
 		// Sequential chain, two candidates on ONE screen: only the earliest
 		// (next-to-pick) is highlighted (Rune Mysteries Ariane: pick "We
@@ -641,9 +642,21 @@
 		var sedChat = "3 Ariane says the tower is in danger. / 3 What are you going to do? / 4 Goodbye.";
 		var sed = window.__rs3qh.matchOptions(sedChat, sedridorOpts, 1);
 		check("chain: only the current screen's option boxed", sed.length === 1 && sed[0] === sedridorOpts[2]);
+		// Within a chain the number still gates: "4 Goodbye." must not grab
+		// Goodbye sitting at slot 5, but "5 Goodbye." (matching position) does.
 		check("chain: number-position agreement required",
-			window.__rs3qh.matchOptions("4 Goodbye.", sedridorOpts, 0).length === 0 &&
-			window.__rs3qh.matchOptions("5 Goodbye.", sedridorOpts, 0)[0] === sedridorOpts[4]);
+			window.__rs3qh.matchOptions("1 Nope, not here. / 4 Goodbye.", sedridorOpts, 0).length === 0 &&
+			window.__rs3qh.matchOptions("1 Nope, not here. / 5 Goodbye.", sedridorOpts, 0)[0] === sedridorOpts[4]);
+
+		// Single-pick confirm steps (Duck Quest "1 Yes.") have no chain to
+		// disambiguate, so they trust the text even when the on-screen number
+		// differs from the guide's — Yes/No get boxed whichever slot they sit in.
+		check("duck: single-pick 'Yes' boxes regardless of slot",
+			window.__rs3qh.matchOptions("1 Yes.", [{ text: "No." }, { text: "Yes." }], 0)[0].text === "Yes.");
+		check("duck: single-pick 'No' boxes regardless of slot",
+			window.__rs3qh.matchOptions("1 No.", [{ text: "Yes." }, { text: "No." }], 0)[0].text === "No.");
+		check("duck: single-pick still silent when its text isn't present",
+			window.__rs3qh.matchOptions("1 Yes.", [{ text: "Maybe." }, { text: "Later." }], 0).length === 0);
 		check("chain: stopwords don't fuzzy-claim similar options",
 			window.__rs3qh.matchOptions("Ariane says the tower is in danger.", sedridorOpts, 0).length === 0);
 		check("chain: remnants don't inflate required conversations",
