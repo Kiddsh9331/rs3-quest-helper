@@ -1656,6 +1656,39 @@
 		return best;
 	}
 
+	// Strongest match across the WHOLE chain, ignoring the ordered pointer —
+	// used only as a fallback when the forward scan finds nothing. The
+	// candidate pointer can drift ahead of the conversation (a dark room
+	// briefly hides the options, which reads as an advance), skipping the
+	// screen's real answer; this re-finds it so a clearly-correct option still
+	// highlights and the pointer re-syncs. Restricted to candidates whose text
+	// is UNIQUE in the chain and matches strongly (full word overlap or
+	// better) with the right option number, so a repeated/returning menu
+	// (Hunt for Red Raktuber's dance answers) is never matched out of order.
+	function bestChainMatch(cands, opts) {
+		var textCount = {};
+		cands.forEach(function (c) {
+			var m = /^(\d)[.)]?\s*(.*)$/.exec(c);
+			var t = normOpt(m ? m[2] : c);
+			if (t.length >= 3) textCount[t] = (textCount[t] || 0) + 1;
+		});
+		var best = null, bestScore = 0, bestCi = -1;
+		for (var ci = 0; ci < cands.length; ci++) {
+			if (/^any$/i.test(cands[ci])) continue;
+			var nm = /^(\d)[.)]?\s*(.*)$/.exec(cands[ci]);
+			var text = normOpt(nm ? nm[2] : cands[ci]);
+			var num = nm ? +nm[1] : null;
+			if (text.length < 3 || textCount[text] !== 1) continue;
+			for (var oi = 0; oi < opts.length; oi++) {
+				var s = optTextScore(text, normOpt(opts[oi].text || ""));
+				if (s >= 1 && (num === null || oi + 1 === num) && s > bestScore) {
+					bestScore = s; best = opts[oi]; bestCi = ci;
+				}
+			}
+		}
+		return best ? { opt: best, ci: bestCi } : null;
+	}
+
 	// The step's chat field looks like "1 Talk about the quest. / Any" —
 	// candidates separated by " / ", each either "Any", a bare option
 	// number, or a number plus the option text. Candidates usually belong
@@ -1716,6 +1749,12 @@
 				if (!enumerated) break; // sequential chain: only the next pick
 			}
 		}
+		// Forward scan found nothing: try to re-sync on a strong unique match
+		// anywhere in the chain before giving up (see bestChainMatch).
+		if (!picked.length) {
+			var fb = bestChainMatch(cands, opts);
+			if (fb) picked = [fb.opt];
+		}
 		// "Any" only means "every option works" when no specific candidate
 		// matched this screen (guides chain "1 Talk about X / Any").
 		if (!picked.length && hasAny) picked = opts.slice();
@@ -1771,7 +1810,10 @@
 			}
 			if (opt) return ci;
 		}
-		return -1;
+		// Forward scan drifted past the answer — re-sync on a strong unique
+		// match so the sequence pointer (nextCand) recovers too.
+		var fb = bestChainMatch(cands, opts);
+		return fb ? fb.ci : -1;
 	}
 
 	// Alt1's readers only match the interface pixel-for-pixel. When neither
