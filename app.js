@@ -3287,6 +3287,10 @@
 		// overview (Rat Catchers…) can be folded away piece by piece.
 		show("details-items-panel", d.items.length > 0);
 		show("details-rec-panel", d.recommended.length > 0);
+		// These panels are shown here, asynchronously, AFTER resetOverview set
+		// the button label — so re-sync it now that the real panels are up,
+		// otherwise it wrongly reads "Expand overview" while the overview is open.
+		overviewButtonLabel();
 	}
 
 	function openQuest(title) {
