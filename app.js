@@ -1791,20 +1791,23 @@
 			return (cur >= 1 && cur <= opts.length) ? [opts[cur - 1]] : [];
 		}
 
-		// Candidates in a chain are picked in ORDER across screens. When two
-		// of them coincidentally sit on the SAME screen (Rune Mysteries'
-		// "2 We should keep our minds on the job. / 1 Yes, it's inspiring."
-		// both appear on screen one), only the EARLIEST unpicked one is the
-		// next to choose — highlighting both is wrong. So for a sequential
-		// chain we stop at the first matching candidate. A step that
-		// enumerates one screen's options 1..N (Soul Searching) is the
-		// exception: every option is a separate attempt, so show them all.
+		// Candidates in a chain are picked in ORDER across screens. A step that
+		// enumerates one screen's options 1..N (Soul Searching) shows them all.
+		// A sequential chain normally highlights just the next pick, BUT a menu
+		// you ask several things on before it returns (Death of Chivalry's
+		// Dawn: "1 Where are we? / 2 Who's Saint Elspeth? / 3 … / 4 Continue.")
+		// lands successive candidates on strictly-later options — highlight
+		// that whole run so you can work down it, since an identical returning
+		// menu gives no reliable per-pick signal. A candidate that lands on an
+		// EARLIER option (Rune Mysteries' coincidental same-screen pair) ends
+		// the run, so only the first is boxed there.
 		var enumerated = requiredConversations(chatField) > 1;
 		// A sequential conversation can return to an earlier menu. Start at
 		// the first candidate not already selected on a previous menu, while
 		// leaving an explicit 1..N enumeration alone (those are separate
 		// conversations and must always show every choice).
 		var firstCand = enumerated ? 0 : Math.max(0, candidateStart || 0);
+		var lastPos = -1;
 		for (var ci = firstCand; ci < cands.length; ci++) {
 			var cand = cands[ci];
 			if (/^any$/i.test(cand)) { hasAny = true; continue; }
@@ -1824,8 +1827,15 @@
 				}
 			}
 			if (opt) {
-				add(opt);
-				if (!enumerated) break; // sequential chain: only the next pick
+				var pos = opts.indexOf(opt);
+				if (enumerated || !picked.length || pos > lastPos) {
+					add(opt);
+					lastPos = pos;
+				} else {
+					break; // lands earlier: not a run, stop after the first
+				}
+			} else if (picked.length && !enumerated) {
+				break; // the run of consecutive on-screen picks ended
 			}
 		}
 		// Forward scan found nothing. A single-pick step has no chain to

@@ -640,6 +640,22 @@
 		check("chain: enumerated step still shows all",
 			window.__rs3qh.matchOptions("1 Convince / 2 Persuade. / 3 Threaten.", [{ text: "Convince" }, { text: "Persuade." }, { text: "Threaten." }], 0).length === 3);
 
+		// The Death of Chivalry (Dawn): a "select an option" menu you ask
+		// several things on before it returns. Successive candidates land on
+		// strictly-later options, so the whole run is boxed (an identical
+		// returning menu can't be tracked per-pick). The later "Let's take her
+		// with us" pick is a different screen and shows on its own.
+		var dawnChat = "1 Where are we? / 2 Who's Saint Elspeth? / 3 How did the Kinshra capture you? / 4 Continue. / 1 Let's take her with us.";
+		var dawnMenu = [{ text: "Where are we?" }, { text: "Who's Saint Elspeth?" }, { text: "How did the Kinshra capture you?" }, { text: "Continue." }, { text: "I'll be back soon." }];
+		var dawn = window.__rs3qh.matchOptions(dawnChat, dawnMenu, 0, 0);
+		check("dawn: multi-ask menu boxes the whole increasing run",
+			dawn.length === 4 && dawn[0] === dawnMenu[0] && dawn[3] === dawnMenu[3]);
+		check("dawn: run stops before an off-menu candidate", dawn.indexOf(dawnMenu[4]) === -1);
+		var takeMenu = [{ text: "Let's take her with us." }, { text: "Leave her." }];
+		check("dawn: later screen boxes its own single pick",
+			window.__rs3qh.matchOptions(dawnChat, takeMenu, 0, 0).length === 1 &&
+			window.__rs3qh.matchOptions(dawnChat, takeMenu, 0, 0)[0] === takeMenu[0]);
+
 		// Chain candidates carry their own screen's option number: a text
 		// match at a different position belongs to a later screen and stays
 		// silent (Rune Mysteries: "4 Goodbye." must not box Goodbye at #5,
