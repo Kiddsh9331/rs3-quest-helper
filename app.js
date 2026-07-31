@@ -1825,13 +1825,18 @@
 		}
 		// Forward scan found nothing. A single-pick step has no chain to
 		// disambiguate, so trust a clear text match even when the option's
-		// number differs from the guide's; otherwise re-sync on a strong
-		// unique match anywhere in the chain (see bestChainMatch).
+		// number differs from the guide's — but only until the pick is made:
+		// once the pointer has advanced past it, a menu that returns to the
+		// same option (Shield of Arrav: Reldo keeps re-offering "Do you know
+		// where…") must NOT be highlighted again, so the step can move on.
+		// Multi-candidate chains re-sync on a strong unique match instead.
 		if (!picked.length) {
 			var real = cands.filter(function (c) { return !/^any$/i.test(c); });
 			if (real.length === 1) {
-				var solo = bestOptionFor(real[0], opts, true);
-				if (solo) picked = [solo];
+				if (!(candidateStart > 0)) {
+					var solo = bestOptionFor(real[0], opts, true);
+					if (solo) picked = [solo];
+				}
 			} else {
 				var fb = bestChainMatch(cands, opts);
 				if (fb) picked = [fb.opt];
@@ -1893,11 +1898,13 @@
 			if (opt) return ci;
 		}
 		// Mirror matchOptions' fallbacks: single-pick steps trust the text
-		// match regardless of number; chains re-sync on a strong unique match.
+		// match regardless of number, but only before the pick is made (so a
+		// returning menu doesn't re-trigger it); chains re-sync on a strong
+		// unique match.
 		var real = [];
 		cands.forEach(function (c, i) { if (!/^any$/i.test(c)) real.push(i); });
 		if (real.length === 1) {
-			return bestOptionFor(cands[real[0]], opts, true) ? real[0] : -1;
+			return (!(candidateStart > 0) && bestOptionFor(cands[real[0]], opts, true)) ? real[0] : -1;
 		}
 		var fb = bestChainMatch(cands, opts);
 		return fb ? fb.ci : -1;

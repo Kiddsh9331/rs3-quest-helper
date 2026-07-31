@@ -657,6 +657,16 @@
 			window.__rs3qh.matchOptions("1 No.", [{ text: "Yes." }, { text: "No." }], 0)[0].text === "No.");
 		check("duck: single-pick still silent when its text isn't present",
 			window.__rs3qh.matchOptions("1 Yes.", [{ text: "Maybe." }, { text: "Later." }], 0).length === 0);
+
+		// Shield of Arrav: a single-pick step ("1 Do you know where…") whose
+		// NPC returns to the same menu must NOT be re-highlighted after the
+		// pick — once the pointer has advanced past it, stay silent so the step
+		// can move on.
+		var arravChat = "1 Do you know where I can find the Phoenix Gang?";
+		var arravMenu = [{ text: "Do you know where I can find the Phoenix Gang?" }, { text: "Goodbye." }];
+		check("shield: single-pick highlights before the pick", window.__rs3qh.matchOptions(arravChat, arravMenu, 0, 0)[0] === arravMenu[0]);
+		check("shield: returning menu after the pick stays silent", window.__rs3qh.matchOptions(arravChat, arravMenu, 1, 1).length === 0);
+		check("shield: matchedCandIndex stops after the pick too", window.__rs3qh.matchedCandIndex(arravChat, arravMenu, 1, 1) === -1);
 		check("chain: stopwords don't fuzzy-claim similar options",
 			window.__rs3qh.matchOptions("Ariane says the tower is in danger.", sedridorOpts, 0).length === 0);
 		check("chain: remnants don't inflate required conversations",
