@@ -471,20 +471,33 @@
 		check("raktuber: identical returning menu moves to next dance answer",
 			rs1.candidateStart === 1 && mo(raktuberChat, raktuberMenu, rs1.index, rs1.candidateStart)[0] === raktuberMenu[4]);
 
-		// Demon Slayer's Spirit of the Mind: a dark room can briefly hide the
-		// options, drifting the candidate pointer past "I seek the Silverlight"
-		// (note the guide's "the" the game drops). The fallback re-finds the
-		// unique answer at any drifted start, so it still highlights and the
-		// pointer re-syncs — but it never fires on an unrelated screen.
+		// Demon Slayer's Spirit of the Mind: the unique-text fallback still
+		// finds the answer forward of the pointer (guide says "the Silverlight",
+		// the game drops "the"). It is FORWARD-ONLY, though: it never reaches
+		// back to re-box a candidate the pointer has already passed, because a
+		// returning menu that re-offers a chosen option (Shield of Arrav) is
+		// indistinguishable from a drift and would otherwise loop. An
+		// unrecovered backward drift degrades to no highlight, never a loop.
 		var mindChat = "1 Yes. / 1 I seek the Silverlight. / 3 A sword that slays demons. / 2 A powerful demon threatens Varrock. / 1 Delrith. / 3 Gideon Bede.";
 		var mindMenu = [{ text: "I seek Silverlight." }, { text: "Graverobbing." }, { text: "I like hanging out in crypts." }];
 		check("demon slayer: in-order start highlights the answer", mo(mindChat, mindMenu, 0, 0)[0] === mindMenu[0]);
-		check("demon slayer: drifted pointer still highlights the answer",
-			mo(mindChat, mindMenu, 0, 4).length === 1 && mo(mindChat, mindMenu, 0, 4)[0] === mindMenu[0]);
-		check("demon slayer: drifted pointer re-syncs to the right candidate",
-			window.__rs3qh.matchedCandIndex(mindChat, mindMenu, 0, 4) === 1);
+		check("demon slayer: forward drift still finds the answer", mo(mindChat, mindMenu, 0, 1)[0] === mindMenu[0]);
+		check("demon slayer: backward-passed pointer stays silent (no loop)", mo(mindChat, mindMenu, 0, 2).length === 0);
 		check("demon slayer: fallback stays silent on an unrelated screen",
 			mo(mindChat, [{ text: "Goodbye." }, { text: "Tell me more." }], 0, 0).length === 0);
+
+		// Shield of Arrav (Charlie): a two-pick step "3 Do you know… / 1 That
+		// sounds fair." Charlie returns to the same menu after the first pick.
+		// Before the pick the answer is boxed; once the pointer has passed it,
+		// the returning menu (which lacks the second pick) is NOT re-boxed.
+		var charlieChat = "3 Do you know where I can find the Black Arm Gang hideout? / 1 That sounds fair. (Pay 10 gold.)";
+		var charlieMenu = [{ text: "Who are you?" }, { text: "What's in it for me?" },
+			{ text: "Do you know where I can find the Black Arm Gang hideout?" },
+			{ text: "I'm looking for the Phoenix Gang." }, { text: "Get a job!" }];
+		check("shield charlie: first pick boxed before it's chosen", mo(charlieChat, charlieMenu, 0, 0)[0] === charlieMenu[2]);
+		check("shield charlie: returning menu after the pick stays silent", mo(charlieChat, charlieMenu, 1, 1).length === 0);
+		check("shield charlie: second pick boxed on its own screen",
+			mo(charlieChat, [{ text: "That sounds fair. (Pay 10 gold.)" }, { text: "No thanks." }], 1, 1)[0].text === "That sounds fair. (Pay 10 gold.)");
 
 		// The Fremennik Trials repeats the same Merchant-trial prompt with
 		// many NPCs. A recognised different speaker must not count as evidence.

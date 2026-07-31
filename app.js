@@ -1739,7 +1739,7 @@
 	// is UNIQUE in the chain and matches strongly (full word overlap or
 	// better) with the right option number, so a repeated/returning menu
 	// (Hunt for Red Raktuber's dance answers) is never matched out of order.
-	function bestChainMatch(cands, opts) {
+	function bestChainMatch(cands, opts, fromCand) {
 		var textCount = {};
 		cands.forEach(function (c) {
 			var m = /^(\d)[.)]?\s*(.*)$/.exec(c);
@@ -1747,7 +1747,12 @@
 			if (t.length >= 3) textCount[t] = (textCount[t] || 0) + 1;
 		});
 		var best = null, bestScore = 0, bestCi = -1;
-		for (var ci = 0; ci < cands.length; ci++) {
+		// Forward only: never re-box a candidate the pointer has already passed.
+		// A returning menu re-offering a chosen option (Shield of Arrav: Reldo
+		// and Charlie keep re-showing their menu) would otherwise loop, and
+		// that's indistinguishable from a genuine pointer drift, so we don't
+		// reach backwards — an unrecovered drift just shows no highlight.
+		for (var ci = Math.max(0, fromCand || 0); ci < cands.length; ci++) {
 			if (/^any$/i.test(cands[ci])) continue;
 			var nm = /^(\d)[.)]?\s*(.*)$/.exec(cands[ci]);
 			var text = normOpt(nm ? nm[2] : cands[ci]);
@@ -1838,7 +1843,7 @@
 					if (solo) picked = [solo];
 				}
 			} else {
-				var fb = bestChainMatch(cands, opts);
+				var fb = bestChainMatch(cands, opts, candidateStart);
 				if (fb) picked = [fb.opt];
 			}
 		}
@@ -1906,7 +1911,7 @@
 		if (real.length === 1) {
 			return (!(candidateStart > 0) && bestOptionFor(cands[real[0]], opts, true)) ? real[0] : -1;
 		}
-		var fb = bestChainMatch(cands, opts);
+		var fb = bestChainMatch(cands, opts, candidateStart);
 		return fb ? fb.ci : -1;
 	}
 
