@@ -798,6 +798,19 @@
 		check("tabber: no |-| or Label= leaks into steps",
 			gTab.sections.every(function (s) { return s.steps.every(function (st) { return !/\|-\||Gang=/.test(st.text + " " + (st.note || "")); }); }));
 
+		// Holy Grail: a "None …" needed line and a section-anchor reference link
+		// ("[[Entrana#Equipment on Entrana|…]]", a place not an item) must not
+		// reach the backpack scanner.
+		function scanNames(g) { var n = []; g.sections.forEach(function (s) { (s.items || []).forEach(function (it) { n.push(it.name); }); }); return n; }
+		var gNone = window.__rs3qh.parseQuickGuide(
+			"==S==\n{{Needed|None - any [[Entrana#Equipment on Entrana|equipment banned from Entrana]] should be banked.}}\n{{Checklist|\n* Do a thing.\n}}\n");
+		check("items: 'None…' + section-anchor link adds no scan items", scanNames(gNone).length === 0);
+		var gReal = window.__rs3qh.parseQuickGuide(
+			"==S==\n{{Needed|[[Excalibur]], [[Prayer potion#(3)|Prayer potion (3)]]}}\n{{Checklist|\n* Do a thing.\n}}\n");
+		var real = scanNames(gReal);
+		check("items: real item + potion dose anchor still extracted",
+			real.indexOf("Excalibur") !== -1 && real.some(function (n) { return /Prayer potion \(3\)/.test(n); }));
+
 		// Land of the Goblins: {{Fairycode|AJQ}} keeps the fairy-ring code.
 		var gFairy = window.__rs3qh.parseQuickGuide(
 			"==S==\n{{Checklist|\n* Head south using fairy code {{Fairycode|AJQ}}.\n}}\n");

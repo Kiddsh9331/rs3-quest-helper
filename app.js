@@ -537,21 +537,26 @@
 				if (!src) src = namedParam(parts, "recommended") || "";
 				out = NEEDED_MARK + (name === "recommended" ? "Recommended: " : "") + src;
 				// Item links inside Needed lines are exact wiki page names —
-				// keep them (with the required amount, when the guide gives
-				// one) so the backpack scanner knows what to look for.
-				var lm, lre = /\[\[([^\]|#]+)(?:#([^\]|]*))?(?:\|([^\]]*))?\]\]/g;
-				while ((lm = lre.exec(src)) !== null) {
-					var iname = lm[1].trim();
-					var anchor = (lm[2] || "").trim();
-					// Potion links use dose anchors ([[antipoison#(3)|...]]);
-					// the dosed name is also the icon's file name.
-					if (/^\(\d+\)$/.test(anchor)) iname += " " + anchor;
-					var qty = 1;
-					var before = /(\d+)\s*(?:x\s*)?$/i.exec(src.slice(Math.max(0, lm.index - 10), lm.index));
-					var labelNum = /^(\d+)\s/.exec((lm[3] || "").trim());
-					if (before) qty = +before[1];
-					else if (labelNum) qty = +labelNum[1];
-					out += ITEM_OPEN + iname + "|" + qty + ITEM_CLOSE;
+				// keep them (with the required amount, when the guide gives one)
+				// so the backpack scanner knows what to look for. But a "None …"
+				// line lists no items, and a link with a SECTION anchor
+				// ("[[Entrana#Equipment on Entrana|…]]") is a reference to a
+				// place, not an item — only a potion DOSE anchor "(3)" belongs to
+				// a real item — so neither should reach the scanner.
+				if (!/^\s*none\b/i.test(src)) {
+					var lm, lre = /\[\[([^\]|#]+)(?:#([^\]|]*))?(?:\|([^\]]*))?\]\]/g;
+					while ((lm = lre.exec(src)) !== null) {
+						var iname = lm[1].trim();
+						var anchor = (lm[2] || "").trim();
+						if (anchor && !/^\(\d+\)$/.test(anchor)) continue; // reference, not an item
+						if (/^\(\d+\)$/.test(anchor)) iname += " " + anchor;
+						var qty = 1;
+						var before = /(\d+)\s*(?:x\s*)?$/i.exec(src.slice(Math.max(0, lm.index - 10), lm.index));
+						var labelNum = /^(\d+)\s/.exec((lm[3] || "").trim());
+						if (before) qty = +before[1];
+						else if (labelNum) qty = +labelNum[1];
+						out += ITEM_OPEN + iname + "|" + qty + ITEM_CLOSE;
+					}
 				}
 			} else if (name === "checklist") {
 				out = "\n" + args.join("\n") + "\n";
@@ -2607,6 +2612,21 @@
 	// Linked pages in Needed lines that are not scannable backpack items.
 	var NON_ITEMS = ["backpack", "bank", "tool belt", "lodestone", "grand exchange", "combat", "quick guide"];
 
+	// The wiki's quest page lists only the items you must BRING; anything the
+	// quick guide references but the quest page omits is obtained during the
+	// quest (Holy Grail's magic whistle). Returns false for such items so the
+	// overview can flag them — but only once the quest-page list has loaded,
+	// so nothing is mislabelled while it's still fetching.
+	function itemIsRequired(name) {
+		var items = guide && guide.details && guide.details.items;
+		if (!items || !items.length) return true;
+		var n = normOpt(name);
+		if (!n) return true;
+		return items.some(function (it) {
+			return normOpt(typeof it === "string" ? it : it.text || "").indexOf(n) !== -1;
+		});
+	}
+
 	function currentItemNames() {
 		if (!guide) return [];
 		var seen = {};
@@ -3070,17 +3090,30 @@
 		guide.sections.forEach(function (s) {
 			s.needed.forEach(function (n) { allNeeded.push(n); });
 		});
-		var items = document.getElementById("items-list");
-		items.innerHTML = "";
-		allNeeded.forEach(function (n) { items.appendChild(el("li", null, n)); });
+		var itemsUl = document.getElementById("items-list");
+		itemsUl.innerHTML = "";
+		allNeeded.forEach(function (n) { itemsUl.appendChild(el("li", null, n)); });
 
-		// Scannable items: exact wiki item names extracted from Needed lines,
-		// with the required amount when the guide gives one.
+		var scanCount = renderScanList();
+		document.getElementById("scan-status").textContent = "";
+		show("items-panel", allNeeded.length > 0 || scanCount > 0);
+		// Open by default on every quest so requirements are not missed;
+		// the user can still collapse it.
+		document.getElementById("items-panel").open = true;
+	}
+
+	// Scannable items: exact wiki item names extracted from Needed lines, with
+	// the required amount when the guide gives one. Extracted here (not inline
+	// in renderMeta) so it can re-run once the quest page's required-items list
+	// arrives and the "obtained during quest" flags can be filled in. Returns
+	// the item count.
+	function renderScanList() {
 		var scanList = document.getElementById("scan-list");
 		scanList.innerHTML = "";
 		var items = currentItemNames();
 		items.forEach(function (it, i) {
-			var li = el("li", "scan-item" + (itemChecked(it.name) ? " done" : ""));
+			var duringQuest = !itemIsRequired(it.name);
+			var li = el("li", "scan-item" + (itemChecked(it.name) ? " done" : "") + (duringQuest ? " during-quest" : ""));
 			var box = document.createElement("input");
 			box.type = "checkbox";
 			box.checked = itemChecked(it.name);
@@ -3091,6 +3124,9 @@
 			mark.setAttribute("data-scan-item", i);
 			li.appendChild(mark);
 			li.appendChild(document.createTextNode(" " + (it.qty > 1 ? it.qty + "× " : "") + it.name + " "));
+			// The wiki keeps quest-obtained items out of "required" — say so, so
+			// the list matches what you actually need to bring.
+			if (duringQuest) li.appendChild(el("span", "during-quest-tag", "obtained during quest"));
 			var count = el("span", "scan-count");
 			count.setAttribute("data-scan-count", i);
 			li.appendChild(count);
@@ -3112,11 +3148,7 @@
 			});
 			scanList.appendChild(li);
 		});
-		document.getElementById("scan-status").textContent = "";
-		show("items-panel", allNeeded.length > 0 || items.length > 0);
-		// Open by default on every quest so requirements are not missed;
-		// the user can still collapse it.
-		document.getElementById("items-panel").open = true;
+		return items.length;
 	}
 
 	// Bring the current step to the top of the list (with a little context
@@ -3323,6 +3355,9 @@
 		// overview (Rat Catchers…) can be folded away piece by piece.
 		show("details-items-panel", d.items.length > 0);
 		show("details-rec-panel", d.recommended.length > 0);
+		// The quest page's required-items list has now loaded — re-render the
+		// scanner list so items it omits get flagged "obtained during quest".
+		renderScanList();
 		// These panels are shown here, asynchronously, AFTER resetOverview set
 		// the button label — so re-sync it now that the real panels are up,
 		// otherwise it wrongly reads "Expand overview" while the overview is open.

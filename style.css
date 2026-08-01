@@ -357,6 +357,19 @@ header {
 	font-family: monospace;
 }
 
+.during-quest-tag {
+	font-size: calc(var(--app-font-scale) * 10px);
+	color: var(--muted);
+	font-style: italic;
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	padding: 0 5px;
+	margin-left: 5px;
+	white-space: nowrap;
+}
+/* An item you pick up mid-quest isn't something to bring: dim it. */
+.scan-item.during-quest { opacity: .8; }
+
 .details-block {
 	border-top: 1px dashed var(--border);
 	margin-top: 6px;
