@@ -605,15 +605,16 @@
 			.replace(/<ref[^>]*\/>/gi, "")
 			.replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, "")
 			.replace(/<br\s*\/?>/gi, " ")
-			// <tabber> holds alternative paths (Dimension of Disaster's Black
+			// <tabber> holds ALTERNATIVE paths (Dimension of Disaster's Black
 			// Arm Gang vs Phoenix Gang). Each tab is "Label=" then content,
-			// separated by "|-|". Turn each label into a heading and drop the
-			// separators so both paths parse as their own sections instead of
-			// leaking "|-| Phoenix Gang=" into a step.
+			// separated by "|-|". Turn each label into a heading (flagged as an
+			// alternative so it's clear you only do one) and drop the separators,
+			// so both paths parse as their own sections instead of leaking
+			// "|-| Phoenix Gang=" into a step.
 			.replace(/<tabber>([\s\S]*?)<\/tabber>/gi, function (_, inner) {
 				return "\n" + inner
 					.replace(/^\s*\|-\|\s*$/gm, "")
-					.replace(/^\s*([^=|\n][^=\n]*?)\s*=\s*$/gm, "\n=== $1 ===\n") + "\n";
+					.replace(/^\s*([^=|\n][^=\n]*?)\s*=\s*$/gm, "\n=== $1 (alternative path) ===\n") + "\n";
 			})
 			// <gallery> blocks list one image per line ("Name.png|caption")
 			// with no [[File:]] brackets; convert each line to an image
@@ -912,6 +913,21 @@
 			}
 		});
 		flushPending();
+
+		// A picture placed before a section's steps (Heartstealer's "Making the
+		// smoke bombs" sits under the heading) renders at the top, ahead of the
+		// step it illustrates. Pin each such section image to the step its
+		// caption clearly names, so it appears inline instead of too early.
+		sections.forEach(function (s) {
+			if (!s.images.length || !s.steps.length) return;
+			s.images = s.images.filter(function (im) {
+				var idx = im.caption ? bestStepForCaption(im.caption, s.steps) : -1;
+				if (idx < 0) return true; // no clear step → keep as a section image
+				var host = s.steps[idx];
+				host.images = (host.images || []).concat(im);
+				return false;
+			});
+		});
 
 		// Drop sections that ended up with no steps and no info.
 		sections = sections.filter(function (s) { return s.steps.length || s.needed.length || s.images.length; });

@@ -790,7 +790,9 @@
 		var gTab = window.__rs3qh.parseQuickGuide(
 			"==Choose==\n<tabber>\nBlack Arm Gang=\n{{Checklist|\n* Talk to Katrine.\n* Get the documents.\n}}\n|-|\nPhoenix Gang=\n{{Checklist|\n* Talk to Baraek.\n* Get the documents.\n}}\n</tabber>\n==Finishing up==\n{{Checklist|\n* Combine the shield.\n* Talk to Orlando.\n}}\n");
 		var tabTitles = gTab.sections.map(function (s) { return s.title; });
-		check("tabber: each tab becomes a section", tabTitles.indexOf("Black Arm Gang") !== -1 && tabTitles.indexOf("Phoenix Gang") !== -1);
+		check("tabber: each tab becomes an alternative-path section",
+			tabTitles.some(function (t) { return /^Black Arm Gang \(alternative/.test(t); }) &&
+			tabTitles.some(function (t) { return /^Phoenix Gang \(alternative/.test(t); }));
 		check("tabber: finishing section survives with its steps",
 			gTab.sections.some(function (s) { return s.title === "Finishing up" && s.steps.some(function (st) { return /Orlando/.test(st.text); }); }));
 		check("tabber: no |-| or Label= leaks into steps",
