@@ -605,6 +605,16 @@
 			.replace(/<ref[^>]*\/>/gi, "")
 			.replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, "")
 			.replace(/<br\s*\/?>/gi, " ")
+			// <tabber> holds alternative paths (Dimension of Disaster's Black
+			// Arm Gang vs Phoenix Gang). Each tab is "Label=" then content,
+			// separated by "|-|". Turn each label into a heading and drop the
+			// separators so both paths parse as their own sections instead of
+			// leaking "|-| Phoenix Gang=" into a step.
+			.replace(/<tabber>([\s\S]*?)<\/tabber>/gi, function (_, inner) {
+				return "\n" + inner
+					.replace(/^\s*\|-\|\s*$/gm, "")
+					.replace(/^\s*([^=|\n][^=\n]*?)\s*=\s*$/gm, "\n=== $1 ===\n") + "\n";
+			})
 			// <gallery> blocks list one image per line ("Name.png|caption")
 			// with no [[File:]] brackets; convert each line to an image
 			// sentinel BEFORE the generic tag strip removes the wrapper and
