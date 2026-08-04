@@ -801,6 +801,11 @@
 		// recommended…" tip under a {{Needed}}). Held here and attached to the
 		// first step as a note, instead of leaking into the Items-needed list.
 		var pendingNote = "";
+		// A {{Map}} placed at the top of a section (Holy Grail's "The location
+		// to blow the whistle", which the step refers to as "the map on the
+		// right") — buffered and attached to that first step, since we have no
+		// side panel to show it in.
+		var pendingMaps = [];
 		var lines = wikitext.split("\n");
 		var i;
 
@@ -824,6 +829,7 @@
 			current = { title: title, needed: [], steps: [], images: [] };
 			sections.push(current);
 			pendingNote = "";
+			pendingMaps = [];
 		}
 
 		function lastStep() {
@@ -836,6 +842,7 @@
 		function flushPending() {
 			if (pendingNote && current && !current.steps.length) current.needed.push(pendingNote);
 			pendingNote = "";
+			pendingMaps = [];
 		}
 
 		// Templates like {{Checklist|...}} span multiple lines, so resolve
@@ -887,8 +894,10 @@
 				if (!parsedLine.text && !parsedLine.chat && !parsedLine.images.length) return;
 				if (depth === 1 || !lastStep()) {
 					var step = { text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps, images: parsedLine.images, links: parsedLine.links, sub: [] };
-					// A tip that preceded this section's first step attaches here.
+					// A tip / a {{Map}} that preceded this section's first step
+					// attaches here (the step the map is "on the right" of).
 					if (pendingNote) { step.note = pendingNote; pendingNote = ""; }
+					if (pendingMaps.length) { step.maps = pendingMaps.concat(step.maps); pendingMaps = []; }
 					current.steps.push(step);
 				} else {
 					lastStep().sub.push({ text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps, links: parsedLine.links });
@@ -906,7 +915,7 @@
 			// first step is buffered (pendingNote) for that step rather than
 			// dumped into the Items-needed list.
 			var prose = extractChat(trimmed.replace(/^[:;]+\s*/, ""));
-			if (!prose.text && !prose.images.length) return;
+			if (!prose.text && !prose.images.length && !prose.maps.length) return;
 			var stepHost = lastStep();
 			if (stepHost) {
 				if (prose.text) stepHost.note = (stepHost.note ? stepHost.note + " " : "") + prose.text;
@@ -914,6 +923,7 @@
 				if (prose.images.length) stepHost.images = (stepHost.images || []).concat(prose.images);
 			} else {
 				if (prose.text) pendingNote = (pendingNote ? pendingNote + " " : "") + prose.text;
+				if (prose.maps.length) pendingMaps = pendingMaps.concat(prose.maps);
 				if (prose.images.length) current.images = current.images.concat(prose.images);
 			}
 		});

@@ -816,6 +816,15 @@
 			"==S==\n{{Checklist|\n* Head south using fairy code {{Fairycode|AJQ}}.\n}}\n");
 		check("fairycode: code kept in step text", /using fairy code AJQ\./.test(gFairy.sections[0].steps[0].text));
 
+		// Holy Grail: a {{Map}} at the top of a section (the "map on the right"
+		// the step refers to) attaches to that first step as a map chip instead
+		// of being dropped, since the overlay has no side panel.
+		var gMapLead = window.__rs3qh.parseQuickGuide(
+			"==S==\n{{Map|mtype=square|x=2743|y=3236|align=right|caption=The spot}}\n{{Needed|[[Excalibur]]}}\n{{Checklist|\n* Go to Brimhaven and blow the whistle.\n* Next step.\n}}\n");
+		var mapStep = gMapLead.sections[0].steps[0];
+		check("map: section-lead map attaches to the first step",
+			mapStep.maps.length === 1 && mapStep.maps[0].x === 2743 && mapStep.maps[0].y === 3236);
+
 		// Efficient Ironman Pathway: steps come from static-row-header-step
 		// table rows (Activity | Notes | Level); other tables and the
 		// Miniguides half are skipped.
