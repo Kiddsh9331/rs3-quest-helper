@@ -1,0 +1,10 @@
+{
+    "runtime.version": "Lua 5.4",
+    "diagnostics.globals": [
+        "log", "formatStr", "id", "ui", "config", "Event", "Plugin", "PluginPermissions",
+        "PersistentDB", "HTTPRequest", "ChatType", "NPCList", "LocList", "ShapeList", "ShapeData",
+        "ShapeEntityAlignType", "CoordGrid", "Vector3", "Vector4", "Player", "Inventory", "Mouse",
+        "MiniMenuEntryType", "GameKey", "ModifierKey", "PluginShutdown", "M", "PLUGIN_DIR", "RS3QH_REPLAY", "REC", "QUESTS_FILE", "LocShapeType", "RotationType", "ScreenConvert", "World"
+    ],
+    "diagnostics.disable": [ "redundant-parameter", "need-check-nil", "inject-field", "undefined-field" ]
+}

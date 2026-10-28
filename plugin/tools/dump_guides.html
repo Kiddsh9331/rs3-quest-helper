@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<!--
+  Runs the Alt1 app's quick-guide parser on the plugin's quests and prints the
+  result as JSON, the input for build_quests.py. From the repo root:
+
+    python -m http.server 8090
+    msedge --headless --disable-gpu --dump-dom --virtual-time-budget=20000 ^
+      http://localhost:8090/plugin/tools/dump_guides.html > dump.html
+
+  then copy the JSON out of <pre id="out"> into guides.json, or open the page
+  in a browser and save the text. Keep the titles in sync with ORDER in
+  build_quests.py.
+
+  dump_guides.html?src=<url> parses pre-fetched wikitext instead (for every
+  quest at once; the wiki turns away hundreds of browser requests): a JSON
+  file { titles: [...quick guides], text: { page: wikitext } } as written by
+  tools/fetch_wikitext.py.
+-->
+<html>
+<head><meta charset="utf-8"><title>Dump guides</title></head>
+<body>
+<pre id="out">pending</pre>
+<script src="../../libs/a1lib.js"></script>
+<script src="../../libs/ocr.js"></script>
+<script src="../../libs/dialog.js"></script>
+<script src="../../libs/chatbox.js"></script>
+<script src="../../libs/font_digits.js"></script>
+<script src="../../app.js"></script>
+<script>
+	var API = "https://runescape.wiki/api.php?format=json&origin=*&";
+	var PARALLEL = 4; // requests at a time, to go easy on the wiki
+	function get(params, cb) {
+		var xhr = new XMLHttpRequest();
+		xhr.open("GET", API + params);
+		xhr.onload = function () {
+			try { cb(JSON.parse(xhr.responseText)); } catch (e) { cb(null, e); }
+		};
+		xhr.onerror = function () { cb(null, "network error"); };
+		xhr.send();
+	}
+	function wikitext(page, cb) {
+		get("action=parse&prop=wikitext&page=" + encodeURIComponent(page), function (data, err) {
+			if (data && data.parse) cb(data.parse.wikitext["*"]); else cb(null, err || (data && data.error && data.error.info));
+		});
+	}
+	// Each quest needs two pages: the quick guide (steps) and the quest page
+	// itself ({{Quest details}}: items required and recommended).
+	function dump(titles) {
+		var out = {}, jobs = [];
+		titles.forEach(function (title) {
+			out[title] = {};
+			jobs.push(function (next) {
+				wikitext(title, function (text, err) {
+					var guide;
+					try { guide = text ? window.__rs3qh.parseQuickGuide(text) : { error: String(err) }; }
+					catch (e) { guide = { error: "parser: " + e }; }
+					guide.details = out[title].details;
+					out[title] = guide;
+					next();
+				});
+			});
+			jobs.push(function (next) {
+				wikitext(title.replace(/\/Quick guide$/, ""), function (text) {
+					try { out[title].details = text ? window.__rs3qh.parseQuestDetails(text) : null; } catch (e) { }
+					next();
+				});
+			});
+		});
+		var running = 0, left = jobs.length;
+		function pump() {
+			while (running < PARALLEL && jobs.length) {
+				running++;
+				jobs.shift()(function () {
+					running--;
+					if (--left === 0) document.getElementById("out").textContent = JSON.stringify(out);
+					else pump();
+				});
+			}
+		}
+		pump();
+	}
+	var src = /[?&]src=([^&]+)/.exec(location.search);
+	if (src) {
+		var xhr = new XMLHttpRequest();
+		xhr.open("GET", decodeURIComponent(src[1]));
+		xhr.onload = function () {
+			var data = JSON.parse(xhr.responseText), out = {};
+			data.titles.forEach(function (title) {
+				var text = data.text[title], quest = data.text[title.replace(/\/Quick guide$/, "")], guide;
+				try { guide = text ? window.__rs3qh.parseQuickGuide(text) : { error: "no page" }; }
+				catch (e) { guide = { error: "parser: " + e }; }
+				try { guide.details = quest ? window.__rs3qh.parseQuestDetails(quest) : null; } catch (e) { guide.details = null; }
+				out[title] = guide;
+			});
+			document.getElementById("out").textContent = JSON.stringify(out);
+		};
+		xhr.send();
+	} else {
+		dump(["The Knight's Sword", "Goblin Diplomacy", "Vampyre Slayer", "Priest in Peril", "Witch's House"]
+			.map(function (t) { return t + "/Quick guide"; }));
+	}
+</script>
+</body>
+</html>
