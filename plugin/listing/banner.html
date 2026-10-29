@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<!-- The mod.io listing image (1280x720). Render with:
+     msedge --headless --disable-gpu --hide-scrollbars --window-size=1280,720 --screenshot=banner.png banner.html -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; }
+  body {
+    background: radial-gradient(ellipse at 75% 40%, #3a2f1c 0%, #1b1712 55%, #0f0d0a 100%);
+    font-family: "Segoe UI", Arial, sans-serif; color: #e8e2d0;
+    display: flex; align-items: center; padding: 0 90px; box-sizing: border-box; gap: 70px;
+  }
+  .left { flex: 1; }
+  h1 { font-size: 78px; margin: 0 0 18px; color: #e7c15a; letter-spacing: 0.5px; line-height: 1.05; }
+  .tag { font-size: 30px; line-height: 1.35; color: #e8e2d0; margin: 0 0 30px; }
+  .points { font-size: 22px; color: #a89f88; line-height: 1.7; margin: 0; padding: 0; list-style: none; }
+  .points li::before { content: ""; display: inline-block; width: 10px; height: 10px; background: #e7c15a;
+    border-radius: 2px; margin-right: 14px; vertical-align: middle; }
+  .card { width: 430px; background: rgba(20, 17, 13, 0.92); border: 2px solid #5a4a2c; border-radius: 6px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6); font-size: 19px; }
+  .card .title { background: #2b2418; padding: 12px 16px; color: #e7c15a; font-weight: 600; display: flex;
+    justify-content: space-between; }
+  .bar { height: 5px; background: #3a3226; } .bar div { height: 5px; width: 20%; background: #7fbf4d; }
+  .card .body { padding: 16px 18px 20px; line-height: 1.45; }
+  .muted { color: #a89f88; } .chat { color: #6fa8dc; } .gold { color: #e7c15a; margin-top: 10px; }
+  .red { color: #c0564a; } .green { color: #7fbf4d; }
+  .ind { padding-left: 18px; }
+</style>
+</head>
+<body>
+  <div class="left">
+    <h1>RS3 Quest Buddy</h1>
+    <p class="tag">Every quest's quick guide, right inside the game.</p>
+    <ul class="points">
+      <li>The current step on screen</li>
+      <li>Who and what to use, highlighted</li>
+      <li>Backpack checks for every item</li>
+      <li>Moves on by itself as you play</li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="title"><span>The Knight's Sword</span><span>3 / 15</span></div>
+    <div class="bar"><div></div></div>
+    <div class="body">
+      Talk to Thurgo south of Port Sarim (north of fairy ring AIQ) with a Redberry pie in the inventory.
+      <div class="chat">Chat: 2 Would you like some redberry pie?</div>
+      <div class="gold">Bring:</div>
+      <div class="ind green">- Redberry pie</div>
+      <div class="gold">Get:</div>
+      <div class="ind red">- 2 iron bars (0/2) <span class="muted">(Grand Exchange)</span></div>
+    </div>
+  </div>
+</body>
+</html>

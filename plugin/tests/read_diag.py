@@ -9,7 +9,8 @@ import sys
 import tempfile
 
 DEFAULT = r"C:\ProgramData\Jagex\RuneScape-BETA\plugins\PluginData.db"
-PLUGIN = "RS3 Quest Helper (test)"
+PLUGIN = "RS3 Quest Buddy (test)"
+OLD_PLUGIN = "RS3 Quest Helper (test)"  # the test build's name before the rename
 
 source = sys.argv[1] if len(sys.argv) > 1 else DEFAULT
 # Copy first: the game keeps the database open while it runs.
@@ -18,8 +19,11 @@ shutil.copy(source, copy)
 
 db = sqlite3.connect(copy)
 # Session recordings (rec.*) have their own reader: read_rec.py.
-rows = db.execute("SELECT Key, Value FROM DataStore WHERE PluginID = ? AND Key NOT LIKE 'rec.%' ORDER BY Key",
-                  (PLUGIN,)).fetchall()
+for plugin in (PLUGIN, OLD_PLUGIN):
+    rows = db.execute("SELECT Key, Value FROM DataStore WHERE PluginID = ? AND Key NOT LIKE 'rec.%' ORDER BY Key",
+                      (plugin,)).fetchall()
+    if rows:
+        break
 for key, value in rows:
     text = value.decode("utf-8", "replace").rstrip("\x00") if isinstance(value, bytes) else str(value)
     print("== " + key)

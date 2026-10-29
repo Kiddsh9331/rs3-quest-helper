@@ -5,3 +5,7 @@ DROP-ALERT-PLAN.md
 HANDOVER.md
 REDDIT-*.md
 __pycache__/
+plugin/dist/
+# gameplay screenshots for the mod.io gallery: other players' names, kept local
+plugin/listing/*.png
+!plugin/listing/banner.png

@@ -36,7 +36,7 @@ def api(params):
     params = dict(params, format="json", redirects="1")
     url = API + "?" + urllib.parse.urlencode(params)
     if url not in cache:
-        req = urllib.request.Request(url, headers={"User-Agent": "rs3qh-plugin-builder (github.com/Kiddsh9331/rs3-quest-helper)"})
+        req = urllib.request.Request(url, headers={"User-Agent": "rs3-quest-buddy-builder (github.com/Kiddsh9331/rs3-quest-helper)"})
         with urllib.request.urlopen(req, timeout=60) as resp:
             cache[url] = json.load(resp)
         time.sleep(0.5)
@@ -46,7 +46,7 @@ def api(params):
 def run_lua():
     lua = lua54.LuaRuntime(encoding=None)
     g = lua.globals()
-    g.PLUGIN_DIR = os.path.join(here, "..", "rs3qh-test").replace("\\", "/").encode()
+    g.PLUGIN_DIR = os.path.join(here, "..", "rs3-quest-buddy").replace("\\", "/").encode()
     g.QUESTS_FILE = os.path.abspath(opts.quests).replace("\\", "/").encode()
     lua.execute(b'package.path = PLUGIN_DIR .. "/?.lua;" .. package.path')
     for script in ("mock.lua", "check_quests.lua"):

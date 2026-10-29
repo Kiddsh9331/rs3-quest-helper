@@ -1,4 +1,4 @@
-# Loads session recordings made by the test plugin (rs3qh-test/recorder.lua)
+# Loads session recordings made by the test plugin (rs3-quest-buddy/recorder.lua)
 # from the beta client's PluginData.db, or from a text file saved with
 # read_rec.py --save. Shared by read_rec.py and replay.py.
 import json
@@ -8,7 +8,8 @@ import sqlite3
 import tempfile
 
 DEFAULT_DB = r"C:\ProgramData\Jagex\RuneScape-BETA\plugins\PluginData.db"
-PLUGIN = "RS3 Quest Helper (test)"
+PLUGIN = "RS3 Quest Buddy (test)"
+OLD_PLUGIN = "RS3 Quest Helper (test)"  # the test build's name before the rename
 TICK_SECONDS = 0.6
 
 
@@ -36,8 +37,12 @@ def load_db(path=DEFAULT_DB):
     copy = os.path.join(tempfile.mkdtemp(), "PluginData.db")
     shutil.copy(path, copy)
     db = sqlite3.connect(copy)
-    rows = dict(db.execute("SELECT Key, Value FROM DataStore WHERE PluginID = ? AND Key LIKE 'rec.%'",
-                           (PLUGIN,)).fetchall())
+    rows = {}
+    for plugin in (PLUGIN, OLD_PLUGIN):
+        rows = dict(db.execute("SELECT Key, Value FROM DataStore WHERE PluginID = ? AND Key LIKE 'rec.%'",
+                               (plugin,)).fetchall())
+        if rows:
+            break
     db.close()
     sessions = {}
     for name in (str(s) for s in _list(rows["rec.sessions"])) if "rec.sessions" in rows else []:

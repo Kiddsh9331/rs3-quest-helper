@@ -19,7 +19,7 @@ Diag.onNote = nil -- optional function(message), e.g. the session recorder
 
 function Diag.Note(message)
     message = tostring(message)
-    log("[rs3qh] " .. message)
+    log("[rs3qb] " .. message)
     if seen[message] then return end
     seen[message] = true
     if Diag.onNote then pcall(Diag.onNote, message) end

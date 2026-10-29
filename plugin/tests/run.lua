@@ -53,6 +53,19 @@ local function pressQuest(name)
     end
     error("no quest row " .. name)
 end
+-- Settings have their own screen: open it, press `label`, come back.
+-- Returns whether the button was there.
+local function inSettings(label)
+    M.fire("Logic")
+    findButton("Settings"):Press()
+    M.fire("Logic")
+    local button = findButton(label)
+    if button then button:Press() end
+    M.fire("Logic")
+    findButton("Back"):Press()
+    M.fire("Logic")
+    return button ~= nil
+end
 local function errorsLogged()
     for _, l in ipairs(M.logs) do if l:find("ERROR") or l:find("failed") then return l end end
 end
@@ -182,7 +195,7 @@ check("loaded note saved", M.db["diag.log"] and M.db["diag.log"][#M.db["diag.log
 check("PluginShutdown is global", type(PluginShutdown) == "function")
 
 M.fire("ContentLayerReady", { component = M.panelRoot })
-check("list title", anyText("^RS3 Quest Helper$") ~= nil)
+check("list title", anyText("^RS3 Quest Buddy %(test%)$") ~= nil)
 check("list statuses coloured like the app", anyText("^Done$") ~= nil and anyText("^Not started$") ~= nil)
 
 -- Nothing changed: a tick doesn't redraw.
@@ -217,8 +230,8 @@ check("progress var readable", anyText("Progress var QUEST_KNIGHTS_SWORD = 0") ~
 -- World: tile marker + head arrow + beacon. 240 tiles from the squire,
 -- a teleport is suggested instead of a path of dots.
 M.fire("ServerLogic")
-check("npc marker placed", M.entities["rs3qh-marker-1"] and M.entities["rs3qh-marker-1"].visible)
-check("tile beacon at Map coords", M.entities["rs3qh-tile"] and M.entities["rs3qh-tile"].coordGrid[2] == 2975 // 64)
+check("npc marker placed", M.entities["rs3qb-marker-1"] and M.entities["rs3qb-marker-1"].visible)
+check("tile beacon at Map coords", M.entities["rs3qb-tile"] and M.entities["rs3qb-tile"].coordGrid[2] == 2975 // 64)
 check("far away: teleport suggested on the card", cardText("^Teleport: Falador lodestone, then about %d+ tiles on foot%.$") ~= nil)
 M.fire("Logic")
 check("far away: teleport text under the player", textComponent("^Teleport to Falador lodestone$",
@@ -241,20 +254,35 @@ check("path dots rest on the ground", path.shapePositions[1].y == 324)
 check("path heads for the destination", path.shapePositions[#path.shapePositions].z > 3335 * 512)
 check("path dots stay bright ahead", path.shapeRGBA[#path.shapeRGBA] & 0xFF >= 0xB0)
 check("path dots medium by default", path.shapePositions[3].x - path.shapePositions[1].x == 180)
-M.fire("Logic")
-findButton("Dots: medium"):Press()
+inSettings("Dots: medium")
 firstDraw = #M.drawn + 1
 M.fire("Draw")
 path = M.drawn[#M.drawn]
 check("dots button cycles to large", M.db.prefs.dots == "large" and path.shapePositions[3].x - path.shapePositions[1].x == 260)
-M.fire("Logic")
-findButton("Dots: large"):Press()
-M.fire("Logic")
-findButton("Dots: small"):Press()
+inSettings("Dots: large")
+inSettings("Dots: small")
 check("dots button cycles round", M.db.prefs.dots == "medium")
+-- The marker and teleport hints can be switched off on their own.
+inSettings("Marker: on")
+M.fire("ServerLogic")
+check("marker setting hides the tile marker", M.db.prefs.beacon == false and M.entities["rs3qb-tile"].visible == false)
+inSettings("Marker: off")
+M.player.position = { x = 3001 * 512, y = 0, z = 3100 * 512 }
+inSettings("Teleport hints: on")
+M.fire("ServerLogic")
+check("teleport hints can be switched off", M.db.prefs.teleport == false and cardText("^Teleport:") == nil)
+inSettings("Teleport hints: off")
+M.fire("Logic")
+findButton("Settings"):Press()
+M.fire("Logic")
+check("settings credit the wiki", anyText("RuneScape Wiki %(runescape%.wiki%), CC BY%-NC%-SA 3%.0") ~= nil)
+check("settings say what recording keeps", anyText("Nothing is sent anywhere") ~= nil)
+findButton("Back"):Press()
+M.fire("Logic")
+check("back from settings to the guide", findButton("Quest list") ~= nil)
 M.player.position = { x = 2975 * 512 + 256, y = 0, z = 3341 * 512 + 256 }
 M.fire("ServerLogic")
-check("beacon hidden once close", M.entities["rs3qh-tile"].visible == false)
+check("beacon hidden once close", M.entities["rs3qb-tile"].visible == false)
 M.player.position = { x = 3001 * 512, y = 0, z = 3100 * 512 }
 M.fire("ServerLogic")
 
@@ -362,11 +390,8 @@ end
 check("panel IDs stay in range after 600 redraws", M.maxDynamicID < 4096)
 
 -- Toggles and navigation.
-M.fire("Logic")
-findButton("Auto: on"):Press()
-check("auto toggled", M.db.prefs.auto == false and findButton("Auto: off") ~= nil)
-M.fire("Logic")
-findButton("Card: on"):Press()
+check("auto toggled", inSettings("Auto: on") and M.db.prefs.auto == false)
+inSettings("Card: on")
 check("card toggled off", M.db.prefs.card == false)
 M.fire("Logic")
 findButton("Back"):Press()
@@ -377,8 +402,8 @@ check("back to list", anyText("^Priest in Peril$") ~= nil)
 
 -- ---------- Goblin Diplomacy, replaying the in-game test ----------
 pressQuest("Goblin Diplomacy")
-findButton("Auto: off"):Press() -- switched off earlier in the test
-findButton("Card: off"):Press() -- likewise
+inSettings("Auto: off") -- switched off earlier in the test
+inSettings("Card: off") -- likewise
 local function gd() return M.db.steps.goblin_diplomacy end
 check("GD item explanations hidden until asked", anyText("Red dye is a dye made from 3 redberries") == nil)
 findButton("Ironman: off"):Press()
@@ -444,7 +469,7 @@ M.npcs["General Wartface"] = { { config = { gridSize = 1 }, coordGrid = "tile-g"
     aabb = { minimum = { x = 0, y = 0, z = 0 }, maximum = { x = 1, y = 1, z = 1 }, centre = { x = 0, y = 0, z = 0 } },
     position = { x = 2957 * 512, y = 0, z = 3513 * 512 } } }
 M.fire("ServerLogic")
-check("generals highlighted on the use step", M.entities["rs3qh-marker-1"].visible and M.entities["rs3qh-marker-1"].coordGrid == "tile-g")
+check("generals highlighted on the use step", M.entities["rs3qb-marker-1"].visible and M.entities["rs3qb-marker-1"].coordGrid == "tile-g")
 
 -- The cutscene steps complete as progress rises.
 for value = 14, 16 do
@@ -540,8 +565,8 @@ check("going through the door completes it", vs() == 9)
 -- "Walk down the stairs": only the staircase that goes down is outlined.
 M.locs = { M.loc("Staircase", "up-tile", { "Climb-up" }), M.loc("Staircase", "down-tile", { "Walk-down" }) }
 M.fire("ServerLogic")
-local second = M.entities["rs3qh-marker-2"]
-check("only the down staircase outlined", M.entities["rs3qh-marker-1"].coordGrid == "down-tile"
+local second = M.entities["rs3qb-marker-2"]
+check("only the down staircase outlined", M.entities["rs3qb-marker-1"].coordGrid == "down-tile"
     and not (second and second.visible))
 M.player.position = { x = 3113 * 512, y = 0, z = 9756 * 512 } -- the basement is far away on the map
 M.fire("ServerLogic")
@@ -663,7 +688,7 @@ local function placed(name, tile, ops, x, z)
     loc.position = { x = x * 512 + 256, y = 0, z = z * 512 + 256 }
     return loc
 end
-local function markerOn() return M.entities["rs3qh-marker-1"].visible and M.entities["rs3qh-marker-1"].coordGrid end
+local function markerOn() return M.entities["rs3qb-marker-1"].visible and M.entities["rs3qb-marker-1"].coordGrid end
 at(2970, 3340)
 M.fire("ServerLogic")
 findButton("Done, next"):Press()
@@ -793,11 +818,9 @@ findButton("Flag a problem (Alt+F)"):Press()
 check("flag button confirms", anyText("Flagged problem #1 at step 14") ~= nil)
 M.fire("KeyDown", { gameKey = GameKey.F, modifiers = ModifierKey.ALT, isRepeat = false })
 check("Alt+F flags too", anyText("Flagged problem #2") ~= nil)
-M.fire("Logic")
-findButton("Recording: on"):Press()
+inSettings("Recording: on")
 M.fire("ChatMessage", { chatMessage = "Said while not recording.", chatType = 0 })
-M.fire("Logic")
-findButton("Recording: off"):Press()
+inSettings("Recording: off")
 check("recording toggle saved", M.db.prefs.record == true)
 
 PluginShutdown()
@@ -811,7 +834,7 @@ local function recordedLine(pattern)
 end
 check("session listed", M.db["rec.sessions"][#M.db["rec.sessions"]] == session)
 check("recording spans several chunks", (M.db["rec." .. session .. ".chunks"] or 0) > 1)
-check("recording starts with a header", recorded[1]:find("^%d+\tstart\t0%.2%.0") ~= nil)
+check("recording starts with a header", recorded[1]:find("^%d+\tstart\t0%.3%.0") ~= nil)
 check("recorded clicks", recordedLine("\tclick\tTalk%-to\t<col=ffff00>Squire Asrol</col>\t4") ~= nil)
 -- Only the open quest is recorded, from the first tick it has a value.
 check("recorded quest progress", recordedLine("\tvar\tthe_knight_s_sword\t0?\t1$") ~= nil)
@@ -842,7 +865,7 @@ end
 check("old sessions pruned", #M.db["rec.sessions"] == 5 and M.db["rec.sessions"][5] == "t6"
     and M.db["rec.t1.1"] == nil and M.db["rec.t6.1"][1] == "0\tnote\tsession 6")
 
-check("markers destroyed", not M.entities["rs3qh-marker-1"].isValid)
+check("markers destroyed", not M.entities["rs3qb-marker-1"].isValid)
 check("no errors logged", errorsLogged() == nil)
 if errorsLogged() then results[#results + 1] = "  logged: " .. errorsLogged() end
 

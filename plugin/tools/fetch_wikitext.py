@@ -23,7 +23,7 @@ opts = parser.parse_args()
 def api(params):
     params = dict(params, format="json", redirects="1")
     req = urllib.request.Request(API + "?" + urllib.parse.urlencode(params),
-                                 headers={"User-Agent": "rs3qh-plugin-builder (github.com/Kiddsh9331/rs3-quest-helper)"})
+                                 headers={"User-Agent": "rs3-quest-buddy-builder (github.com/Kiddsh9331/rs3-quest-helper)"})
     for attempt in range(5):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:

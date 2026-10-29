@@ -20,7 +20,7 @@ here = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
 
 def run_replay(game_lines):
     """Feeds a recording through the current plugin; returns the replay's own recording."""
-    plugin_dir = os.path.join(here, "..", "rs3qh-test").replace("\\", "/")
+    plugin_dir = os.path.join(here, "..", "rs3-quest-buddy").replace("\\", "/")
     lua = lua54.LuaRuntime()
     lua.globals().PLUGIN_DIR = plugin_dir
     lua.globals().REC = lua.table_from(game_lines)

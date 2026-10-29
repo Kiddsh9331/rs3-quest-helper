@@ -49,6 +49,7 @@ local frame, tick = 0, 0
 local walls, wallsTick, wallsX, wallsZ = nil, -100, nil, nil
 
 World.pathEnabled = true
+World.beaconEnabled = true   -- the destination tile marker (a setting)
 World.dotSize = 90                -- half the width of a path dot, fine units (a tile is 512)
 -- What the last update showed, for the recording: nil when no dots, else
 -- { target = "x,y", walkable = true when routed around walls, detour = true
@@ -110,7 +111,7 @@ local function placeMarker(slot, coordGrid, width, length)
     local marker = markers[slot]
     if marker == nil or not marker.isValid or markerShapes[slot] ~= shapeKey then
         if marker ~= nil and marker.isValid then marker:Destroy() end
-        marker = makeEntity("rs3qh-marker-" .. slot, rectShape(width, length, HIGHLIGHT, false))
+        marker = makeEntity("rs3qb-marker-" .. slot, rectShape(width, length, HIGHLIGHT, false))
         markers[slot] = marker
         markerShapes[slot] = shapeKey
     end
@@ -450,9 +451,9 @@ function World.Update()
     end
 
     local navDistance = navTile and World.DistanceTo(navTile)
-    if navTile ~= nil and (navDistance == nil or navDistance > BEACON_HIDE_DISTANCE) then
+    if World.beaconEnabled and navTile ~= nil and (navDistance == nil or navDistance > BEACON_HIDE_DISTANCE) then
         if beacon == nil or not beacon.isValid then
-            beacon = makeEntity("rs3qh-tile", rectShape(1, 1, BEACON_COLOUR, true))
+            beacon = makeEntity("rs3qb-tile", rectShape(1, 1, BEACON_COLOUR, true))
             if beacon ~= nil then beacon:SetDrawDistance(48 * TILE, 64 * TILE) end
         end
         if beacon ~= nil then

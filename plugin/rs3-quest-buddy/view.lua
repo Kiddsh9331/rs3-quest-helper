@@ -132,7 +132,7 @@ local onWheel -- defined with scrolling below; rows forward the wheel to it
 local function row(parent, height)
     local layer = make(ui.Layer, parent)
     layer:SetSize(0, height, 1.0, 0.0)
-    pcall(function() layer:Subscribe(ui.Hook.ONSCROLLWHEEL, "rs3qh-scroll", onWheel) end)
+    pcall(function() layer:Subscribe(ui.Hook.ONSCROLLWHEEL, "rs3qb-scroll", onWheel) end)
     return layer
 end
 
@@ -352,7 +352,7 @@ function View.Render(root, rows, previous, focus)
     if focus and anchorY ~= nil then scroll.offset = anchorY - 60 end
     applyScroll()
     for _, target in ipairs({ root, body }) do
-        pcall(function() target:Subscribe(ui.Hook.ONSCROLLWHEEL, "rs3qh-scroll", onWheel) end)
+        pcall(function() target:Subscribe(ui.Hook.ONSCROLLWHEEL, "rs3qb-scroll", onWheel) end)
     end
     return body
 end

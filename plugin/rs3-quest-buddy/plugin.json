@@ -1,6 +1,6 @@
 {
-    "name": "RS3 Quest Helper (test)",
-    "version": "0.2.0",
+    "name": "RS3 Quest Buddy (test)",
+    "version": "0.3.0",
     "contactEmailAddress": "change-me@example.com",
     "hasRibbonIcon": true,
     "requiredDependencies": {},

@@ -1,4 +1,4 @@
--- Replays a session recording (rs3qh-test/recorder.lua) against mock.lua.
+-- Replays a session recording (rs3-quest-buddy/recorder.lua) against mock.lua.
 -- The recorded inputs (position, backpack, quest vars and statuses, clicks,
 -- chat, dialogue text, cutscenes, the tester's own step changes) are fed
 -- back tick by tick while the plugin records again; replay.py compares the
@@ -112,9 +112,9 @@ for _, e in ipairs(events) do
 end
 setFiller(FILLER_COUNT)
 
-RS3QH_REPLAY = {}
+RS3QB_REPLAY = {}
 assert(loadfile(PLUGIN_DIR .. "/main.lua"))()
-assert(RS3QH_REPLAY.setStep, "plugin didn't load: " .. tostring(M.db["diag.loadError"]))
+assert(RS3QB_REPLAY.setStep, "plugin didn't load: " .. tostring(M.db["diag.loadError"]))
 M.fire("ContentLayerReady", { component = M.panelRoot })
 
 -- ---------- feed the session back ----------
@@ -163,10 +163,10 @@ local function apply(e)
         -- take a newly opened quest's from the line itself.
         if vars[a[1]] and tonumber(a[4]) then vars[a[1]].value = tonumber(a[4]) end
         if a[3] and a[3] ~= "" then statuses[a[1]] = a[3] end
-        RS3QH_REPLAY.openQuest(a[1])
+        RS3QB_REPLAY.openQuest(a[1])
     elseif e.kind == "step" and a[5] == "auto" and WORLD_REASONS[a[4]] then
         local now = M.db.steps and tonumber(M.db.steps[a[1]]) or 1
-        if now < tonumber(a[3]) then RS3QH_REPLAY.setStep(tonumber(a[3]), "auto") end
+        if now < tonumber(a[3]) then RS3QB_REPLAY.setStep(tonumber(a[3]), "auto") end
     elseif e.kind == "step" and a[5] ~= "auto" then
         -- The tester moved the step themselves: do the same, unless they were
         -- catching up with something the replay already did by itself.
@@ -175,7 +175,7 @@ local function apply(e)
         -- (A click that left the step where it was, like ticking and
         -- unticking a box, changed nothing in game either.)
         local noop = a[2] == a[3] and a[5] ~= "restart"
-        if not noop and not (forward and now >= tonumber(a[3])) then RS3QH_REPLAY.setStep(tonumber(a[3]), a[5]) end
+        if not noop and not (forward and now >= tonumber(a[3])) then RS3QB_REPLAY.setStep(tonumber(a[3]), a[5]) end
     end
 end
 

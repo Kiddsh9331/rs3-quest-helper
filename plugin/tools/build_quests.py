@@ -1,4 +1,4 @@
-# Builds plugin/rs3qh-test/quests.lua from the Alt1 app's parsed guides, then
+# Builds plugin/rs3-quest-buddy/quests.lua from the Alt1 app's parsed guides, then
 # enriches it from the RuneScape Wiki so the plugin doesn't need web access:
 #   pages: what each linked page is (npc / item / location / scenery) and its
 #          map coordinates, for highlighting and navigation
@@ -24,7 +24,7 @@ import urllib.request
 
 ORDER = ["The Knight's Sword", "Goblin Diplomacy", "Vampyre Slayer", "Priest in Peril", "Witch's House"]
 API = "https://runescape.wiki/api.php"
-OUT = "plugin/rs3qh-test/quests.lua"
+OUT = "plugin/rs3-quest-buddy/quests.lua"
 BS = chr(92)
 
 parser = argparse.ArgumentParser()
@@ -41,7 +41,7 @@ def api(params):
     url = API + "?" + urllib.parse.urlencode(params)
     if url in cache:
         return cache[url]
-    req = urllib.request.Request(url, headers={"User-Agent": "rs3qh-plugin-builder (github.com/Kiddsh9331/rs3-quest-helper)"})
+    req = urllib.request.Request(url, headers={"User-Agent": "rs3-quest-buddy-builder (github.com/Kiddsh9331/rs3-quest-helper)"})
     for attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
@@ -247,7 +247,7 @@ def acquire_names():
         return set()
     lua = lua54.LuaRuntime()
     here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, "..", "rs3qh-test", "advance.lua"), encoding="utf8") as f:
+    with open(os.path.join(here, "..", "rs3-quest-buddy", "advance.lua"), encoding="utf8") as f:
         advance = lua.execute(f.read())
     names = set()
     for quest in ORDER:

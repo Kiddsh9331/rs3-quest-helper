@@ -13,7 +13,7 @@ import sys
 from lupa import lua54
 
 here = os.path.dirname(os.path.abspath(__file__)).replace('\\', '/')
-plugin_dir = os.path.join(here, '..', 'rs3qh-test').replace('\\', '/')
+plugin_dir = os.path.join(here, '..', 'rs3-quest-buddy').replace('\\', '/')
 
 lua = lua54.LuaRuntime()
 lua.globals().PLUGIN_DIR = plugin_dir
@@ -45,6 +45,21 @@ lines.insert(-1, ('PASS' if round_trip else 'FAIL') + ' replaying the recorded t
 if not round_trip:
     lines.insert(-1, '  ' + '; '.join(fixed + broke + extra) + ' (%d same)' % len(same))
     lines[-1] = 'REPLAY FAILED' if lines[-1] == 'ALL PLUGIN TESTS PASSED' else lines[-1]
+
+# The release zip's contents (tools/package.py), with and without walking
+# guidance, each loaded fresh and checked by release.lua.
+import tempfile
+sys.path.insert(0, os.path.join(here, '..', 'tools'))
+import package
+for guidance in (True, False):
+    with tempfile.TemporaryDirectory() as staged:
+        package.stage(staged, guidance=guidance)
+        release = package.check(staged, guidance)
+    ok = release.endswith('RELEASE CHECKS PASSED')
+    lines.insert(-1, ('PASS' if ok else 'FAIL') + ' release build checks (%s guidance)' % ('with' if guidance else 'without'))
+    if not ok:
+        lines.insert(-1, '  ' + '; '.join(l for l in release.splitlines() if l.startswith('FAIL')))
+        lines[-1] = 'RELEASE FAILED' if lines[-1] == 'ALL PLUGIN TESTS PASSED' else lines[-1]
 report = '\n'.join(lines)
 print(report)
 sys.exit(0 if report.endswith('ALL PLUGIN TESTS PASSED') else 1)
