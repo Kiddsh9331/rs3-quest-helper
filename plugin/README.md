@@ -44,7 +44,9 @@ quest" below).
   near-upcoming step names jumps to that step; clicking the step's own
   object ("Search the crate", "Pull the lever") finishes it a few ticks
   later unless the game says nothing happened ("You find nothing", "The
-  door is locked"); the quest's progress var
+  door is locked"); this needs chat access, and a step that names items
+  ("With thread and leather, fix the bellows") waits for the game instead;
+  the quest's progress var
   moving finishes the step you were on; picking up an "Obtain/Mine..." item
   ticks that step (also a step or two early); handing a step's items over
   ticks it; getting an item the next step uses ticks the current one;

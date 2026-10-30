@@ -1548,6 +1548,12 @@ local function ownClickStep(quest, entry)
     local action = Advance.MainAction(step)
     if action == nil or not Advance.CLICK_VERBS[action] then return false end
     if Advance.IsUseStep(step) or Advance.IsMakeStep(step) or #acquireWants(quest, entry) > 0 then return false end
+    -- "With thread and leather, fix the bellows": the click only works with
+    -- the items in the bag, and the step is finished by the game, not the
+    -- click. And without chat access the "You need..." line that would
+    -- cancel the click never arrives, so don't guess.
+    if #stepTargets(quest, entry.index).items > 0 then return false end
+    if not Plugin.HasPermission(PluginPermissions.chatAccess) then return false end
     -- "Search the cupboard" with "Give Thurgo the portrait" next: the
     -- portrait turning up finishes it (onBackpackChange), not the click. So
     -- for any next step that hands over or uses something.

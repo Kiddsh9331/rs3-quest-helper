@@ -313,6 +313,9 @@ check("a named lodestone is a place to go", (Travel.Named("Teleport to Varrock."
 -- ---------- load ----------
 local Quests = require("quests")
 check("five quests", #Quests == 5)
+-- The replay hook (tests/replay.lua) exposes the step logic; a few checks
+-- below reach the quest tables through it.
+RS3QB_REPLAY = {}
 assert(loadfile(PLUGIN_DIR .. "/main.lua"))()
 check("loaded through main.lua", M.db["diag.loadError"] == nil)
 check("loaded note saved", M.db["diag.log"] and M.db["diag.log"][#M.db["diag.log"]]:find("loaded: 5 quests") ~= nil)
@@ -732,6 +735,23 @@ check("going down the stairs completes it", vs() == 10)
 M.locs = { M.loc("Coffin", "coffin-tile", { "Open" }) }
 M.fire("ServerLogic")
 check("coffin outlined", M.db["diag.marked"] == "loc Coffin")
+-- Without chat access the "You need..." line can't cancel it, so no guess.
+M.perms.chatAccess = false
+M.select("Open", "Coffin", 3)
+for _ = 1, 4 do M.fire("ServerLogic") end
+check("no chat access, no own-click finish", vs() == 10)
+M.perms.chatAccess = true
+-- "With thread and leather, fix the bellows" (EW1, beta session 5): a step
+-- that names items is finished by the game, not the click.
+local coffinEntry = RS3QB_REPLAY.inside.flatSteps.vampyre_slayer[10]
+local savedNpcs = coffinEntry.step.npcs
+coffinEntry.step.npcs = { "garlic" }
+coffinEntry.targets = nil
+M.select("Open", "Coffin", 3)
+for _ = 1, 4 do M.fire("ServerLogic") end
+check("a step that names an item isn't finished by the click", vs() == 10)
+coffinEntry.step.npcs = savedNpcs
+coffinEntry.targets = nil
 M.select("Open", "Coffin", 3)
 M.fire("ChatMessage", { chatMessage = "The coffin is locked.", chatType = 0 })
 for _ = 1, 4 do M.fire("ServerLogic") end
