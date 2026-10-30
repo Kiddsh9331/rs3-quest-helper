@@ -51,24 +51,59 @@ function View.CharsFor(width)
     return math.max(10, math.floor(width / UNITS_PER_CHAR))
 end
 
--- Lines `content` takes when word-wrapped at `charsPerLine`. Wrapping at
--- word boundaries leaves lines short, so counting characters alone came out
--- too low and long steps were cut off.
-function View.LineCount(content, charsPerLine)
+-- The font is proportional: "- 3 free inventory slots during the first
+-- stage of the" (54 characters) and "- Armour, weapons and food. Make sure
+-- you have" (46) both filled a 402-unit row in game (2026-10-30), so one
+-- average width per character wrapped the wide line a row too late and the
+-- next item drew over it. Advance widths of the 15pt Museo Sans glyphs,
+-- per 1000 em, scaled to where those rows wrapped (16.2 units per em).
+local EM = 16.2 / 1000
+local GLYPH = {}
+local function glyphs(chars, list)
+    for i = 1, #chars do GLYPH[chars:sub(i, i)] = list[i] * EM end
+end
+glyphs("abcdefghijklmnopqrstuvwxyz", { 560, 600, 520, 600, 560, 330, 600, 600, 260, 260, 540, 260, 880,
+    600, 580, 600, 600, 370, 460, 340, 600, 520, 800, 520, 520, 480 })
+glyphs("ABCDEFGHIJKLMNOPQRSTUVWXYZ", { 640, 620, 640, 680, 560, 540, 690, 700, 270, 400, 620, 520, 840,
+    700, 720, 600, 720, 620, 560, 560, 680, 640, 920, 620, 580, 560 })
+glyphs("0123456789", { 580, 580, 580, 580, 580, 580, 580, 580, 580, 580 })
+glyphs(".,:;!'| ", { 270, 270, 270, 270, 270, 270, 270, 260 })
+glyphs("-()[]/?\"", { 340, 340, 340, 340, 340, 400, 500, 400 })
+local GLYPH_OTHER = 600 * EM
+
+-- Width of `s` in interface units as the panel's font draws it.
+function View.TextWidth(s)
+    local total = 0
+    for i = 1, #s do
+        local byte = s:byte(i)
+        if byte < 0x80 or byte >= 0xC0 then -- one glyph per UTF-8 start byte
+            total = total + (GLYPH[s:sub(i, i)] or GLYPH_OTHER)
+        end
+    end
+    return total
+end
+
+-- Lines `content` takes when word-wrapped: at `width` units with the glyph
+-- widths, or at `charsPerLine` characters without a width. Wrapping at word
+-- boundaries leaves lines short, so counting characters alone came out too
+-- low and long steps were cut off.
+function View.LineCount(content, charsPerLine, width)
+    local limit = width or charsPerLine
+    local space = width and View.TextWidth(" ") or 1
     local lines = 0
     for part in (content .. "<br>"):gmatch("(.-)<br>") do
         local plain = part:gsub("<[^>]*>", "")
         local count, used = 1, 0
         for word in plain:gmatch("%S+") do
-            local length = #word
+            local length = width and View.TextWidth(word) or #word
             if used == 0 then
                 used = length
-            elseif used + 1 + length <= charsPerLine then
-                used = used + 1 + length
+            elseif used + space + length <= limit then
+                used = used + space + length
             else
                 count, used = count + 1, length
             end
-            while used > charsPerLine do count, used = count + 1, used - charsPerLine end
+            while used > limit do count, used = count + 1, used - limit end
         end
         lines = lines + count
     end
@@ -76,15 +111,27 @@ function View.LineCount(content, charsPerLine)
 end
 
 -- Lines as the game itself would wrap them, when the API offers the font's
--- measuring call (config.Font:GetStringHeightAndLineCount); nil otherwise,
--- or when the answer looks wrong, and the estimate above is used.
+-- measuring calls (FontType: GetStringLineCount(text, wrapWidth), or
+-- GetStringHeightAndLineCount(text, wrapWidth, lineSpacing) which returns
+-- the height first); nil otherwise, or when the answer looks wrong, and the
+-- estimate above is used. Measured per <br> paragraph, as the game skips
+-- tags when it wraps.
 local measureState = nil -- "api" or "estimate", noted once in diagnostics
+local function fontLines(font, part, width)
+    local ok, count = pcall(function() return font:GetStringLineCount(part, width) end)
+    if ok and type(count) == "number" then return count end
+    local _, lines = font:GetStringHeightAndLineCount(part, width, LINE_HEIGHT)
+    return lines
+end
 local function measuredLines(content, width)
     if width == nil or width <= 0 then return nil end
     local ok, lines = pcall(function()
         local font = config.Font.MUSEO_SANS_15PT_REGULAR
-        local _, count = font:GetStringHeightAndLineCount(content, width)
-        return count
+        local total = 0
+        for part in (content .. "<br>"):gmatch("(.-)<br>") do
+            total = total + fontLines(font, part, width)
+        end
+        return total
     end)
     if not ok or type(lines) ~= "number" or lines < 1 or lines > 60 then
         if measureState == nil then
@@ -102,7 +149,7 @@ end
 
 -- `width` (interface units) lets the game measure the text itself.
 function View.TextHeight(content, charsPerLine, width)
-    local lines = measuredLines(content, width) or View.LineCount(content, charsPerLine)
+    local lines = measuredLines(content, width) or View.LineCount(content, charsPerLine, width)
     return lines * LINE_HEIGHT + 4
 end
 
@@ -297,7 +344,9 @@ function render.blocks(body, r, chars)
     local y = 0
     for i, b in ipairs(r.blocks) do
         local x = (b.indent or 0) * STEP_INDENT
-        local t = text(layer, b.text, View.colour[b.colour or "text"] or View.colour.text, x, y, nil, heights[i])
+        -- the width the height was measured at (contentWidth - indent)
+        local t = text(layer, b.text, View.colour[b.colour or "text"] or View.colour.text, x, y,
+            contentWidth - x, heights[i])
         t:SetSize(-x, heights[i], 1.0, 0.0)
         y = y + heights[i] + 2
     end

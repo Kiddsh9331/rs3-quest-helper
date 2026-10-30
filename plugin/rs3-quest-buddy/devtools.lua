@@ -122,9 +122,14 @@ local function probeAPI(app)
     end)
     try("font measure (300 wide)", function()
         local font = config.Font.MUSEO_SANS_15PT_REGULAR
-        local h, n = font:GetStringHeightAndLineCount("The quick brown fox jumps over the lazy dog and keeps on running.", 300)
-        return "height " .. tostring(h) .. ", lines " .. tostring(n) .. ", width of 'Search the crate' "
-            .. tostring(font:GetStringWidth("Search the crate"))
+        local sample = "The quick brown fox jumps over the lazy dog and keeps on running."
+        local h, n = font:GetStringHeightAndLineCount(sample, 300, 18)
+        return "height " .. tostring(h) .. ", lines " .. tostring(n) .. ", GetStringLineCount "
+            .. tostring(font:GetStringLineCount(sample, 300)) .. ", width of 'Search the crate' "
+            .. tostring(font:GetStringWidth("Search the crate")) .. " (estimate "
+            .. string.format("%.0f", View.TextWidth("Search the crate")) .. "), baseline "
+            .. tostring(font.baseline) .. ", ascent " .. tostring(font.maxAscent) .. ", descent "
+            .. tostring(font.maxDescent)
     end)
     try("fonts", function()
         local names = {}

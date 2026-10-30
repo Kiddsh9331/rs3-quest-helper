@@ -53,7 +53,7 @@ step's chat options against its text.
 pick up and move), progress strip, text blocks. Also turns matching
 dialogue options blue (text colour only).
 
-**view.lua** (439). Draws the ribbon panel from a list of "rows" (title,
+**view.lua** (488). Draws the ribbon panel from a list of "rows" (title,
 text, buttons, step with checkbox...). Handles scrolling and only redraws
 when the rows changed.
 
@@ -84,7 +84,7 @@ and the dotted path (`drawPath`, using path.lua with the walls nearby).
 9. The panel screens: quest list, guide, settings.
 10. Event subscriptions and startup.
 
-**devtools.lua** (173, test build only, not in the release zip). The
+**devtools.lua** (178, test build only, not in the release zip). The
 Debug section: dump visible interface text to the console, test a wiki
 download, show the progress value log.
 

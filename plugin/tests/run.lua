@@ -279,6 +279,31 @@ check("either of two items counts", Advance.HaveCount({ ["super antifire potion"
 -- though 18 characters would fit in 2 (why long steps were cut off).
 local View = require("view")
 check("line count wraps at word boundaries", View.LineCount("aaaa bbbbbbbb cccc", 10) == 3)
+-- Proportional widths (IMPROVEMENTS B3): the four item lines that wrapped in
+-- game on 2026-10-30 in a 402-unit row, wide letters and narrow ones alike.
+check("wide letters wrap sooner", View.LineCount("- Armour, weapons and food. Make sure you have enough food to "
+    .. "survive in battle against the monsters below.", 56, 402) == 3)
+check("narrow letters fit more", View.LineCount("- 3 free inventory slots during the first stage of the quest", 56, 402) == 2
+    and View.LineCount("- Any Ardougne cloak, for the Kandarin monastery Teleport.", 56, 402) == 2
+    and View.LineCount("- 5 coins (0/5)", 56, 402) == 1)
+check("a UTF-8 character is one glyph", View.TextWidth("caf\xc3\xa9") < View.TextWidth("cafe") + 1)
+-- The game's own measuring call when the client offers it, with the
+-- FontType signatures from the docs; the estimate when it doesn't.
+local measured = {}
+config.Font = { MUSEO_SANS_15PT_REGULAR = {
+    GetStringLineCount = function(_, part, wrapWidth) measured[#measured + 1] = wrapWidth; return 4 end } }
+check("GetStringLineCount is used per paragraph", View.TextHeight("one<br>two", 56, 300) == 8 * 18 + 4
+    and measured[1] == 300 and measured[2] == 300)
+config.Font = { MUSEO_SANS_15PT_REGULAR = {
+    GetStringHeightAndLineCount = function(_, _, wrapWidth, lineSpacing)
+        assert(type(wrapWidth) == "number" and type(lineSpacing) == "number")
+        return 123, 5
+    end } }
+check("GetStringHeightAndLineCount's second value when that's all there is", View.TextHeight("x", 56, 300) == 5 * 18 + 4)
+config.Font = { MUSEO_SANS_15PT_REGULAR = { GetStringLineCount = function() error("no") end,
+    GetStringHeightAndLineCount = function() error("no") end } }
+check("a failing font call falls back to the estimate", View.TextHeight("- 5 coins (0/5)", 56, 402) == 18 + 4)
+config.Font = nil
 check("picture references dropped", Advance.WithoutPictureRefs("Talk to Thurgo (pictured right, north of AIQ) now.")
     == "Talk to Thurgo (north of AIQ) now." and Advance.WithoutPictureRefs("Follow it (see the map).") == "Follow it.")
 

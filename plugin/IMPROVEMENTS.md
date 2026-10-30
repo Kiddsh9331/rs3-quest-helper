@@ -460,7 +460,7 @@ Do item B2 from plugin/IMPROVEMENTS.md: redraw the panel when its root resizes (
 
 ### B3. Text wrapping that matches the game
 Status: done 2026-10-30 offline; confirm in game
-Notes: `View.TextHeight` asks `config.Font.MUSEO_SANS_15PT_REGULAR:GetStringHeightAndLineCount(text, width)` under pcall and uses the line count when it looks sane, else the estimate; which path is in use is in diagnostics (`textMeasure`). The exact argument list is from the docs' summary, so check the Probe API output in game.
+Notes: In game on 2026-10-30 the panel drew one item over the next: the diagnostics said `textMeasure = estimate` (the first version called `GetStringHeightAndLineCount(text, width)`, but the FontType docs want `(text, wrapWidth, lineSpacing, ...)` and return the height first, so the call threw), and the average-width estimate wrapped a line of wide letters a row too late. Now: `View.TextHeight` tries `font:GetStringLineCount(text, width)` per `<br>` paragraph, then `GetStringHeightAndLineCount(text, width, 18)`, else the estimate; and the estimate uses per-glyph widths (`View.TextWidth`, Museo Sans advance widths scaled to 16.2 units per em, fitted to four wrap points from the screenshot). Still to confirm in game: that `wrapWidth` in pixels equals interface units at the player's UI scale (Probe API logs the measured and estimated width of one string), and whether `font.baseline` should replace the fixed 18-unit line height.
 
 Evidence: `View.LineCount` estimates wrapped lines from an average
 character width (7.1 units) measured once for one font. Long words, many
