@@ -397,6 +397,15 @@ Prompt:
 Do item A12 from plugin/IMPROVEMENTS.md: let "Return to Veldaban" find "Commander Veldaban" met earlier (last-word or containment match when unambiguous) and reuse that step's spot. Test, check_quests no-nav before/after, no commit.
 ```
 
+### A13. Coins in the money pouch, free backpack slots, "Backpack full"
+Status: done 2026-10-31; money pouch inventory to confirm in game
+Evidence: beta session 6 (Fight Arena). "5 coins (0/5)" stayed red with 788 coins in the money pouch (the plugin only read the backpack). "3 free inventory slots during the first stage" had no check, the backpack was full, the "Borrow" on the suit of armour failed but the quest var still moved, so the step was ticked with nothing in the bag. "Beer or 2 coins to purchase a pint" only ever checked the beer.
+Notes: Coins from the money pouch are counted as backpack coins (`readBackpack`: an `id.Inv` name with POUCH/MONEY, else `config.Inv.FromID(623)`; the docs don't list the pouch, so the Probe API button logs the inventory names and ids 94/623, and `diag.moneyPouch` says what was found). Free slots from `Inv.freeSlotCount` (docs: Inventory page), lines like "N free inventory slots" show "(free: X/N)". A step with a "Get:" list and fewer free slots than missing items shows "Backpack full: free N slots first." in red. "X or Y" lines check each option with its own count and purpose clause dropped (`Advance.OptionNeed`). Not done: holding a step's tick when its var moves but the item never arrived (the var is the more reliable signal in general); worn equipment still isn't readable (no inventory documented, see A5).
+Prompt:
+```
+Do item A13 from plugin/IMPROVEMENTS.md: after an in-game Probe API run, set the money pouch inventory from what it logged (name or id) instead of the search, and if a worn-equipment inventory shows up, use it for "Equip the armour" steps (A5). Test, no commit.
+```
+
 ---
 
 ## B. UI and text for any screen size and ratio

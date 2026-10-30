@@ -683,6 +683,20 @@ local function vs() return M.db.steps.vampyre_slayer end
 local function targets() return M.db["diag.stepTargets"] end
 check("VS recommended items listed", anyText("^RECOMMENDED$") ~= nil and anyText("Holy symbol") ~= nil)
 check("VS required items listed", anyText("Beer or 2 coins to purchase a pint") ~= nil)
+-- Coins live in the money pouch (beta: "5 coins (0/5)" stayed red with 788
+-- in the pouch); "3 free inventory slots" is checked against the backpack.
+check("free slot lines are a slot count", Advance.ParseNeeded("3 free inventory slots during the first stage").slots == 3
+    and Advance.ParseNeeded("Free inventory space").slots == 1 and Advance.ParseNeeded("5 coins").slots == nil)
+check("coins line red without coins", colourOf(textComponent("^%- Beer or 2 coins")) == "red")
+M.pouch = 788
+M.fire("InventoryUpdated")
+M.fire("ServerLogic")
+check("money pouch coins count", colourOf(textComponent("^%- Beer or 2 coins")) == "green"
+    and M.db["diag.moneyPouch"] == "MONEY_POUCH")
+M.pouch = 0
+M.fire("InventoryUpdated")
+M.fire("ServerLogic")
+check("coins line red again when the pouch empties", colourOf(textComponent("^%- Beer or 2 coins")) == "red")
 -- IMPROVEMENTS C2: the game's own requirements at the top of the guide.
 check("requirements from the game's quest data", anyText("^REQUIREMENTS$") ~= nil
     and colourOf(textComponent("^%- 10 Strength %(you: 5%)$")) == "red"
@@ -1008,6 +1022,18 @@ M.locs = { placed("Door", "door-1", { "Open" }, 2978, 3338), placed("Staircase",
     placed("Staircase", "stairs-up", { "Climb-up" }, 2980, 3345) }
 M.fire("ServerLogic")
 check("wrong floor: the stairs up outlined, not the doors", M.db["diag.marked"] == "loc Staircase" and markerOn() == "stairs-up")
+-- A full backpack on a step that hands you an item (Fight Arena's armour
+-- on the beta): say so before the click, and the recording notes the room.
+local savedBag = M.backpack
+M.backpack = {}
+for i = 1, 28 do M.backpack[i] = { "Trout", 1 } end
+M.fire("InventoryUpdated")
+M.fire("ServerLogic")
+check("full backpack warned on a get step", anyText("^Backpack full: free 1 slot first%.$") ~= nil)
+M.backpack = savedBag
+M.fire("InventoryUpdated")
+M.fire("ServerLogic")
+check("warning gone with room again", anyText("^Backpack full") == nil)
 firstDraw = #M.drawn + 1
 M.fire("Draw")
 local toStairs = M.drawn[#M.drawn]

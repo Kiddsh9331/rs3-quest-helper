@@ -14,6 +14,7 @@ Vector4 = { new = function(r, g, b, a) return { r, g, b, a } end }
 
 id = {
     Font = { MUSEO_SANS_15PT_REGULAR = 1 },
+    Inv = { INV = 93, MONEY_POUCH = 623 },
     StyleSheet = { DEFAULT = 1, BUTTON_DEFAULT = 2 },
     Component = { TOPLEVEL_V2__PLUGIN_BUILD_LAYER_TOP = 999 },
     Interface = { DIALOGUE_OPTIONS = 1188 },
@@ -127,18 +128,30 @@ config = {
         end
         return q
     end },
-    Inv = { INV = 93 },
+    Inv = { INV = 93, MONEY_POUCH = { id = 623, configName = "MONEY_POUCH", size = 1 }, FromID = function(i)
+        if i == 623 then return { id = 623, configName = "MONEY_POUCH", size = 1 } end
+        return nil
+    end },
 }
 
 -- ---------- player, inventory, mouse ----------
 M.backpack = {}
-Inventory = { Find = function(invID)
-    assert(invID == 93)
-    return { GetSlots = function()
-        local slots = {}
-        for i, item in ipairs(M.backpack) do slots[i] = { obj = { name = item[1], id = item[3] or (1000 + i) }, count = item[2] } end
-        return slots
-    end }
+M.pouch = 0 -- coins in the money pouch (inventory 623)
+Inventory = { Find = function(inv)
+    local invID = type(inv) == "table" and inv.id or inv
+    if invID == 623 then
+        return { isValid = true, slotCount = 1, GetSlots = function()
+            if M.pouch > 0 then return { { obj = { name = "Coins", id = 995 }, count = M.pouch } } end
+            return {}
+        end }
+    end
+    assert(invID == 93, "unknown inventory " .. tostring(invID))
+    return { isValid = true, slotCount = 28, usedSlotCount = #M.backpack, freeSlotCount = 28 - #M.backpack,
+        GetSlots = function()
+            local slots = {}
+            for i, item in ipairs(M.backpack) do slots[i] = { obj = { name = item[1], id = item[3] or (1000 + i) }, count = item[2] } end
+            return slots
+        end }
 end }
 M.player = { position = { x = 3001 * 512, y = 0, z = 3100 * 512 }, coordGrid = { level = 0 } }
 M.levels = { [2] = 5 } -- Strength 5

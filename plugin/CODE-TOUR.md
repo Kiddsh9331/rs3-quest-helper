@@ -57,7 +57,7 @@ dialogue options blue (text colour only).
 text, buttons, step with checkbox...). Handles scrolling and only redraws
 when the rows changed.
 
-**advance.lua** (904). The step logic, pure text rules (no game calls):
+**advance.lua** (929). The step logic, pure text rules (no game calls):
 what kind of step it is (travel, climb, use, make, get, fight), which step a
 click belongs to (`MatchInteraction`), whether climbing or arriving finishes
 a step, what a step says to get, item quantities in the backpack, landmarks
@@ -70,7 +70,7 @@ first, narrowed to the one the step means by `placeGroup`), the
 right stairs when you're on the wrong floor or underground, the tile marker,
 and the dotted path (`drawPath`, using path.lua with the walls nearby).
 
-**app.lua** (2,310). The plugin itself, top to bottom:
+**app.lua** (2,388). The plugin itself, top to bottom:
 1. Settings, saved state (current quest and step per quest), step lists.
 2. Quest status and progress from the game's quest data.
 3. Items: what each step needs, backpack checks, Grand Exchange or recipe hints.
@@ -84,7 +84,7 @@ and the dotted path (`drawPath`, using path.lua with the walls nearby).
 9. The panel screens: quest list, guide, settings.
 10. Event subscriptions and startup.
 
-**devtools.lua** (178, test build only, not in the release zip). The
+**devtools.lua** (209, test build only, not in the release zip). The
 Debug section: dump visible interface text to the console, test a wiki
 download, show the progress value log.
 

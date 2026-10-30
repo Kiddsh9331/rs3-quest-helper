@@ -138,6 +138,37 @@ local function probeAPI(app)
         return #names .. ": " .. table.concat(names, ", ")
     end)
     try("Player.GetLevelCapped(Attack)", function() return Player.GetLevelCapped(0) end)
+    try("backpack slots", function()
+        local inv = Inventory.Find(config.Inv.INV)
+        return "slotCount " .. tostring(inv.slotCount) .. ", used " .. tostring(inv.usedSlotCount) .. ", free "
+            .. tostring(inv.freeSlotCount)
+    end)
+    try("inventory names (pouch/money/worn/equip/coin)", function()
+        local names = {}
+        for name in pairs(id.Inv) do
+            local upper = tostring(name):upper()
+            if upper:find("POUCH", 1, true) or upper:find("MONEY", 1, true) or upper:find("WORN", 1, true)
+                or upper:find("EQUIP", 1, true) or upper:find("COIN", 1, true) then
+                names[#names + 1] = tostring(name) .. "=" .. tostring(id.Inv[name])
+            end
+        end
+        table.sort(names)
+        return #names .. ": " .. table.concat(names, ", ")
+    end)
+    for _, invID in ipairs({ 94, 623 }) do
+        try("config.Inv.FromID(" .. invID .. ")", function()
+            local cfg = config.Inv.FromID(invID)
+            local inv = Inventory.Find(cfg)
+            local shown = {}
+            for _, slot in pairs(inv:GetSlots()) do
+                if slot ~= nil and slot.obj ~= nil and tostring(slot.obj.name) ~= "" then
+                    shown[#shown + 1] = tostring(slot.obj.name) .. " x" .. tostring(slot.count)
+                end
+            end
+            return tostring(cfg.configName) .. ", size " .. tostring(cfg.size) .. ", valid " .. tostring(inv.isValid)
+                .. ": " .. table.concat(shown, ", ")
+        end)
+    end
     try("quest prerequisites", function()
         local quest = app.currentQuest()
         local questType = app.questTypeFor(quest)

@@ -810,7 +810,21 @@ function Advance.ParseNeeded(text)
     for part in (inner:gsub("%s+and%s+", ","):gsub("%s+or%s+", ",") .. ","):gmatch("%s*(.-)%s*,") do
         if part ~= "" then parts[#parts + 1] = part end
     end
-    return { name = name, qty = tonumber(qty) or 1, label = text, parts = parts }
+    local need = { name = name, qty = tonumber(qty) or 1, label = text, parts = parts }
+    need.slots = Advance.FreeSlotsWanted(need)
+    return need
+end
+
+-- "3 free inventory slots during the first stage of the quest", "Free
+-- inventory space": how many empty backpack slots the line asks for, nil
+-- when it isn't about slots at all.
+function Advance.FreeSlotsWanted(need)
+    local name = need.name:lower()
+    if name:match("^free%s+inventory%s+s[lp]") or name:match("^free%s+backpack%s+s[lp]")
+        or name:match("^free%s+s[lp]") or name:match("^empty%s+inventory%s+s[lp]") then
+        return need.qty
+    end
+    return nil
 end
 
 local function singular(name)
@@ -821,12 +835,23 @@ Advance.Singular = singular
 -- How many of an item the backpack has. `counts` maps lower-case item names
 -- to totals. Plurals and "any X" match, and so do variants that contain the
 -- name ("orange goblin mail" counts toward "3 goblin mail": you still have it).
+-- One option of an "X or Y" line: "2 coins to purchase a pint" is 2 coins,
+-- the purpose clause dropped.
+function Advance.OptionNeed(option)
+    local parsed = Advance.ParseNeeded((option:gsub("^an?%s+", "")))
+    parsed.name = parsed.name:gsub("%s+to%s+%a+%s.*$", ""):gsub("%s+for%s+.*$", "")
+    return parsed
+end
+
 function Advance.HaveCount(counts, need)
     -- "An anti-dragon shield or super antifire potion": either will do.
+    -- "Beer or 2 coins to purchase a pint": each option with its own count
+    -- (788 coins are 394 lots of 2).
     if need.name:find(" or ", 1, true) then
         local best = 0
         for option in (need.name .. " or "):gmatch("(.-) or ") do
-            best = math.max(best, Advance.HaveCount(counts, { name = (option:gsub("^an?%s+", "")) }))
+            local parsed = Advance.OptionNeed(option)
+            best = math.max(best, Advance.HaveCount(counts, { name = parsed.name }) // math.max(1, parsed.qty))
         end
         return best
     end

@@ -19,8 +19,11 @@ quest" below).
   filters and A-D ... U-Z jumps. Pick one and the guide opens at the top:
   status, the game's own **Requirements** (skills with your level, quests,
   quest points, green or red), the quest's items (green when in your
-  backpack, red when missing; kit advice like "combat gear and food" in
-  grey), then every step with Back / Done. The panel scrolls to a step
+  backpack, red when missing; coins count from the money pouch; "3 free
+  inventory slots" is checked against your empty slots; "Beer or 2 coins"
+  is green with either; kit advice like "combat gear and food" in grey),
+  then every step with Back / Done. A step that hands you items warns
+  "Backpack full" when there's no room for them. The panel scrolls to a step
   when it changes; **Current step** jumps there; the list comes back where
   you left it; a thin bar on the right shows how far down you are. (Test
   build only) a Debug section with the test tools, including **Probe API**.

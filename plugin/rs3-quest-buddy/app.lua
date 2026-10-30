@@ -103,6 +103,7 @@ local reports = { probe = "", fetch = "", chat = "", dialogue = "", action = "",
 local lastVarValue = nil
 local backpack = nil            -- { [lower-case item name] = count }, nil when unreadable
 local backpackIDs = {}          -- { [lower-case item name] = object ID }
+local bagState = { free = nil, pouchInv = nil, pouch = 0 } -- empty slots; the money pouch inventory and its coins
 local backpackInterfaces = {}   -- interfaces where backpack item icons were found
 local backpackScanCooldown = 0
 local finishedSeen = false
@@ -256,15 +257,66 @@ end
 
 -- Item counts by lower-case name; also remembers each item's object ID so
 -- its icon can be found in the backpack interface.
+-- The money pouch isn't in the docs; look for an inventory config whose
+-- name says pouch or money (id.Inv), else the classic id 623. false when
+-- there's none to read.
+local function pouchInventory()
+    if bagState.pouchInv ~= nil then return bagState.pouchInv end
+    local found = false
+    safe(function()
+        local names = {}
+        for name in pairs(id.Inv) do
+            local upper = tostring(name):upper()
+            if upper:find("POUCH", 1, true) or upper:find("MONEY", 1, true) then names[#names + 1] = name end
+        end
+        table.sort(names)
+        for _, name in ipairs(names) do
+            local inv = Inventory.Find(config.Inv[name])
+            if inv ~= nil and inv.isValid ~= false then found = config.Inv[name] break end
+        end
+        if found == false then
+            local cfg = config.Inv.FromID(623)
+            local inv = cfg ~= nil and Inventory.Find(cfg)
+            if inv ~= nil and inv.isValid ~= false then found = cfg end
+        end
+    end)
+    bagState.pouchInv = found
+    Diag.Snapshot("moneyPouch", found and tostring(safe(function() return found.configName end) or found) or "not found")
+    return found
+end
+
 local function readBackpack()
     return safe(function()
         local counts, ids = {}, {}
-        for _, slot in pairs(Inventory.Find(config.Inv.INV):GetSlots()) do
+        local inv = Inventory.Find(config.Inv.INV)
+        local used = 0
+        for _, slot in pairs(inv:GetSlots()) do
             local name = slot ~= nil and slot.obj ~= nil and Advance.Clean(slot.obj.name) or ""
             if name ~= "" then -- empty slots come back as nameless objects
                 counts[name] = (counts[name] or 0) + (slot.count or 1)
                 ids[name] = safe(function() return slot.obj.id end)
+                used = used + 1
             end
+        end
+        -- Empty slots, from the inventory itself when it says (Inv.freeSlotCount).
+        local free = safe(function() return inv.freeSlotCount end)
+        if type(free) ~= "number" then
+            local total = safe(function() return inv.slotCount end)
+            free = (type(total) == "number" and total or 28) - used
+        end
+        bagState.free = free
+        -- Coins live in the money pouch, not the backpack: count them as if
+        -- they were in it, so "5 coins" and "buy X for five coins" work.
+        bagState.pouch = 0
+        local pouch = pouchInventory()
+        if pouch then
+            safe(function()
+                for _, slot in pairs(Inventory.Find(pouch):GetSlots()) do
+                    local name = slot ~= nil and slot.obj ~= nil and Advance.Clean(slot.obj.name) or ""
+                    if name == "coins" then bagState.pouch = bagState.pouch + (slot.count or 0) end
+                end
+            end)
+            if bagState.pouch > 0 then counts["coins"] = (counts["coins"] or 0) + bagState.pouch end
         end
         backpackIDs = ids
         return counts
@@ -381,7 +433,7 @@ local function checkable(need)
     if (pages[name] and pages[name].kind == "item") or tradeable[name] ~= nil or recipes[name] then return true end
     if name:find(",", 1, true) then return false end
     for option in (name .. " or "):gmatch("(.-) or ") do
-        local _, words = option:gsub("%S+", "")
+        local _, words = Advance.OptionNeed(option).name:gsub("%S+", "")
         if words > 4 then return false end
         for _, word in ipairs(KIT_WORDS) do
             if option:find(word, 1, true) then return false end
@@ -402,12 +454,17 @@ local function itemBlocks(items, indent, withInfo)
     for _, item in ipairs(items) do
         local label = View.Escape((item.label:gsub("%s*%b()", "")))
         local need, qty = item.need, item.qty or item.need.qty
-        if item.recommended or backpack == nil or not checkable(need) then
+        if need.slots and not item.recommended and bagState.free ~= nil then
+            -- "3 free inventory slots": against the backpack's empty slots.
+            local free = bagState.free
+            out[#out + 1] = { text = "- " .. label .. string.format(" (free: %d/%d)", math.min(free, need.slots), need.slots),
+                colour = free >= need.slots and "green" or "red", indent = indent }
+        elseif item.recommended or backpack == nil or not checkable(need) then
             -- Kit advice ("combat gear and food") is muted: nothing to check.
             out[#out + 1] = { text = "- " .. label .. (item.recommended and " (recommended)" or ""),
                 colour = (item.recommended or not checkable(need)) and "muted" or "text", indent = indent }
         else
-            local have = Advance.HaveCount(backpack, need)
+            local have = Advance.HaveCount(backpack, item.either or need)
             local count = qty > 1 and string.format(" (%d/%d)", math.min(have, qty), qty) or ""
             out[#out + 1] = { text = "- " .. label .. count, colour = have >= qty and "green" or "red", indent = indent }
             if have < qty then
@@ -1072,6 +1129,16 @@ local function stepBlocks(quest, entry, forCard, done)
         if #get > 0 then
             blocks[#blocks + 1] = { text = "Get:", colour = "gold" }
             for _, b in ipairs(itemBlocks(get, 1, false)) do blocks[#blocks + 1] = b end
+            -- Fight Arena's armour with a full backpack: the borrow fails but
+            -- the quest's var still moves. Say so before the click.
+            local missing = 0
+            for _, item in ipairs(get) do
+                if backpack ~= nil and Advance.HaveCount(backpack, item.need) == 0 then missing = missing + 1 end
+            end
+            if bagState.free ~= nil and missing > 0 and bagState.free < missing then
+                blocks[#blocks + 1] = { text = string.format("Backpack full: free %d slot%s first.", missing,
+                    missing == 1 and "" or "s"), colour = "red", indent = 1 }
+            end
         end
     end
     return blocks
@@ -1454,6 +1521,7 @@ local function bagText(counts)
     local parts = {}
     for name, count in pairs(counts) do parts[#parts + 1] = name .. "=" .. count end
     table.sort(parts)
+    if bagState.free ~= nil then parts[#parts + 1] = "free=" .. bagState.free end
     return table.concat(parts, ";")
 end
 
@@ -1882,8 +1950,11 @@ local function guideRows()
         local need = Advance.ParseNeeded(firstItem)
         if not line:match("^OR%s") and not seenItems[need.name] then
             seenItems[need.name] = true
+            -- "Beer or 2 coins to purchase a pint": either counts (the hints
+            -- under a missing line still follow the first item).
+            local either = line:find("%s+or%s+") and Advance.ParseNeeded((line:gsub("%s*%b()", ""))) or nil
             local qty = stillNeeded(quest, need, current)
-            if qty ~= nil then wanted[#wanted + 1] = { label = line, need = need, qty = qty } end
+            if qty ~= nil then wanted[#wanted + 1] = { label = line, need = need, either = either, qty = qty } end
         end
     end
     local items = itemBlocks(wanted, 0, showInfo)
@@ -2303,6 +2374,7 @@ if RS3QB_REPLAY ~= nil then
         stepItems = stepItems, stepBlocks = stepBlocks, acquireWants = acquireWants,
         producedItems = producedItems, neededParsed = neededParsed, isTradeable = isTradeable,
         recipeFor = recipeFor, setPref = setPref, currentIndex = currentIndex, ownClickStep = ownClickStep,
+        bagNow = function() return backpack, bagState end,
         setBackpack = function(counts) backpack = counts end,
     }
 end
