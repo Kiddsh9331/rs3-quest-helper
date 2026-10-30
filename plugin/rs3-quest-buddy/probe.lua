@@ -145,6 +145,40 @@ function Probe.Normalise(text)
 end
 
 -- "1 Chat / 2 Ask about X / Accept" -> { "chat", "askaboutx", "accept" }
+-- Guides also write chat as option numbers: "1 / 1" (option 1, then 1),
+-- "4 X" (option 4, then anything), "~" (any option). Returns the numbers
+-- in order (false for "any"), or nil when the chat is written out.
+function Probe.ChatNumbers(chat)
+    if chat == nil then return nil end
+    local out, plain = {}, 0
+    for part in (chat .. " / "):gmatch("(.-) / ") do
+        part = part:gsub("^%s+", ""):gsub("%s+$", "")
+        if part:match("^%d+$") then
+            out[#out + 1] = tonumber(part)
+        elseif part == "~" or part == "X" or part == "x" or part == "any" then
+            out[#out + 1] = false
+        elseif part:match("^%d+%s+[Xx~]$") then
+            out[#out + 1] = tonumber(part:match("^%d+"))
+            out[#out + 1] = false
+        else
+            plain = plain + 1
+        end
+    end
+    if plain > 0 or #out == 0 then return nil end
+    return out
+end
+
+-- The chat line for the card: numbers made readable ("option 1, then 1").
+function Probe.ChatLabel(chat)
+    local numbers = Probe.ChatNumbers(chat)
+    if numbers == nil then return chat end
+    local parts = {}
+    for i, n in ipairs(numbers) do
+        parts[#parts + 1] = (i > 1 and "then " or "") .. (n and ("option " .. n) or "any option")
+    end
+    return table.concat(parts, ", ")
+end
+
 function Probe.ChatCandidates(chat)
     local out = {}
     if chat == nil then return out end

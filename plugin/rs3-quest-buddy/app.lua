@@ -45,13 +45,29 @@ local MAX_LEARNED_INTERFACES = 8
 local ARRIVED_DISTANCE = 12              -- tiles from a travel step's destination that count as there
 local INHERIT_LOOKBACK = 6               -- steps searched back for "them"/"him" NPCs
 local BACKPACK_SCAN_EVERY = 10           -- ticks between full scans while the backpack isn't found
-local HANDOVER_VAR_TICKS = 3             -- a progress rise this soon after a hand-over is the same event
+local ITEM_VAR_TICKS = 3                 -- a progress rise this soon after an item moved the step is the same event
 local ENTER_NEAR = 25                    -- tiles from an "Enter ..." step's place where its doors are outlined
 local WALL_STATS_EVERY = 50              -- ticks between notes of what the path saw (for the recording)
 local UNDERGROUND_Y = 6400               -- map rows from here north are dungeons
 local CARD_SUBS = 8                      -- a step's notes on the card; long lists stay in the panel
 local DOT_SIZES = { small = 64, medium = 90, large = 130 }   -- path dot half-widths (a tile is 512)
 local NEXT_DOT_SIZE = { small = "medium", medium = "large", large = "small" }
+local TUNE = {
+    arrivedRough = 20,      -- tiles that count as "there" for a rough spot ("the room to the north")
+    roughTiles = 10,        -- how far "to the north" of the last place a rough spot is put
+    cardTextMax = 300,      -- characters of a step's instruction on the card; the rest is in the panel
+    ownTeleportFar = 60,    -- tiles; a step's own teleport replaces the dots from further than this
+    clickSettle = 3,        -- ticks after clicking the step's own object before it counts
+    resizeSettle = 10,      -- ticks after the panel stops resizing before it's redrawn
+}
+-- The quest list's filters and letter jumps; the card sizes cycle.
+local LIST = {
+    filters = { "all", "started", "todo", "done" },
+    labels = { all = "All", started = "Started", todo = "Not started", done = "Done" },
+    groups = { { "A-D", "A", "D" }, { "E-H", "E", "H" }, { "I-L", "I", "L" }, { "M-P", "M", "P" },
+        { "Q-T", "Q", "T" }, { "U-Z", "U", "Z" } },
+    nextCardSize = { small = "medium", medium = "large", large = "small" },
+}
 
 local pages = Quests.pages or {}         -- [lower-case wiki page] = { kind, x, y, plane }
 local itemInfo = Quests.items or {}      -- [lower-case item] = how to get or make it
@@ -69,6 +85,7 @@ local DB_QUEST, DB_STEPS, DB_VARLOG, DB_PREFS, DB_DIALOG_IFACES =
 
 local questKey = PersistentDB:GetString(DB_QUEST)                       -- quest the guide is on
 local stepIndex = PersistentDB:GetStructuredData(DB_STEPS) or {}        -- [questKey] = next step to do (1-based)
+local subDone = PersistentDB:GetStructuredData("subDone") or {}           -- ["questKey:index"] = sub-bullets ticked on a list step
 local varLog = PersistentDB:GetStructuredData(DB_VARLOG) or {}          -- [questKey] = { "step 3: 10 -> 20", ... }
 local dialogInterfaces = PersistentDB:GetStructuredData(DB_DIALOG_IFACES) or {} -- where options were seen
 local prefs = PersistentDB:GetStructuredData(DB_PREFS) or {}
@@ -90,7 +107,7 @@ local backpackInterfaces = {}   -- interfaces where backpack item icons were fou
 local backpackScanCooldown = 0
 local finishedSeen = false
 local serverTick = 0            -- server ticks since load
-local lastHandover = -100       -- serverTick when items were last handed over (see onBackpackChange)
+local lastItemStep = -100       -- serverTick when the backpack last moved the step (see onBackpackChange)
 local travelHint = nil          -- { name, walk }: teleport suggestion for the current step
 local climbsDone = 0            -- climbs made on the current step ("the ladder, then the staircase")
 
@@ -185,6 +202,39 @@ local function progressValue(quest)
     local master = questType and masterVar(questType)
     if master == nil then return nil end
     return safe(function() return master.varPlayer.value end)
+end
+
+-- The game's own requirements for the quest (config.Quest.preReqSkills and
+-- preReqQuests): skills with the player's level, prerequisite quests with
+-- their status, quest points. Lines as panel blocks, sorted.
+local function requirementBlocks(quest)
+    local questType = questTypeFor(quest)
+    if questType == nil then return {} end
+    local blocks = {}
+    for _, req in pairs(safe(function() return questType.preReqSkills end) or {}) do
+        local skill, level = safe(function() return req.skillType end), safe(function() return req.minimumLevel end)
+        if type(level) == "number" and level > 0 then
+            local name = Advance.SKILL_NAMES[math.tointeger(tonumber(skill) or -1) or -1] or tostring(skill)
+            local have = safe(function() return Player.GetLevelCapped(skill) end)
+            local colour = "text"
+            if type(have) == "number" then colour = have >= level and "green" or "red" end
+            blocks[#blocks + 1] = { text = string.format("- %d %s%s", level, name,
+                type(have) == "number" and string.format(" (you: %d)", have) or ""), colour = colour }
+        end
+    end
+    for _, req in pairs(safe(function() return questType.preReqQuests end) or {}) do
+        local name = safe(function() return req.name end)
+        if type(name) == "string" and name ~= "" then
+            local done = safe(function() return req.hasFinishedQuest end)
+            blocks[#blocks + 1] = { text = "- " .. View.Escape(name), colour = done == nil and "text" or (done and "green" or "red") }
+        end
+    end
+    local points = safe(function() return questType.preReqQuestPoints end)
+    if type(points) == "number" and points > 0 then
+        blocks[#blocks + 1] = { text = string.format("- %d quest points", points), colour = "text" }
+    end
+    table.sort(blocks, function(a, b) return a.text < b.text end)
+    return blocks
 end
 
 -- Debug line: which config was picked and its progress var.
@@ -353,8 +403,9 @@ local function itemBlocks(items, indent, withInfo)
         local label = View.Escape((item.label:gsub("%s*%b()", "")))
         local need, qty = item.need, item.qty or item.need.qty
         if item.recommended or backpack == nil or not checkable(need) then
+            -- Kit advice ("combat gear and food") is muted: nothing to check.
             out[#out + 1] = { text = "- " .. label .. (item.recommended and " (recommended)" or ""),
-                colour = item.recommended and "muted" or "text", indent = indent }
+                colour = (item.recommended or not checkable(need)) and "muted" or "text", indent = indent }
         else
             local have = Advance.HaveCount(backpack, need)
             local count = qty > 1 and string.format(" (%d/%d)", math.min(have, qty), qty) or ""
@@ -561,13 +612,17 @@ function stepTargets(quest, index)
         local info = pages[page:lower()] or {}
         if info.kind == "item" then
             targets.items[#targets.items + 1] = Advance.BaseName(page)
-        elseif info.kind == "npc" or info.kind == nil then
-            -- An NPC, or a page the wiki couldn't place: worth a look. Not
-            -- achievements, quests, skills or spells ("other").
+        elseif info.kind == "npc" or (info.kind == nil and Advance.LooksLikeName(step.text, page)) then
+            -- An NPC, or an unplaced page written as a name in the step:
+            -- worth a look. Not achievements, quests, skills, spells
+            -- ("other") or "your backpack" and "the minimap".
             targets.npcs[#targets.npcs + 1] = page:gsub("%s*%b()", "")
         end
         local rank = NAV_PRIORITY[info.kind or ""] or 5
-        if info.x ~= nil and (rank < navRank or (travel and rank == navRank)) then
+        -- Where an item is found only matters when the step gets it: "With
+        -- the slashed book, go to the middle room" isn't about the bookcase.
+        local spot = info.x ~= nil and (info.kind ~= "item" or Advance.IsAcquireStep(step))
+        if spot and (rank < navRank or (travel and rank == navRank)) then
             targets.nav, navRank = spotOf(quest, index, info, (page:gsub("%s*%b()", ""))), rank
         end
     end
@@ -575,17 +630,32 @@ function stepTargets(quest, index)
     for _, page in ipairs(step.npcs or {}) do
         if (pages[page:lower()] or {}).kind == "npc" then hasNPC = true end
     end
-    -- Unlinked mentions of the quest's NPCs ("Return to Morgan.").
+    -- Unlinked mentions of the quest's NPCs ("Return to Morgan."), or of
+    -- part of a name when only one of the quest's NPCs fits ("Return to
+    -- Veldaban" for Commander Veldaban, "the Duke" for Duke Horacio).
+    local function addNPC(npc)
+        targets.npcs[#targets.npcs + 1] = npc.name
+        hasNPC = true
+        if npc.info.x ~= nil and NAV_PRIORITY.npc < navRank then
+            targets.nav, navRank = spotOf(quest, index, npc.info, npc.name), NAV_PRIORITY.npc
+        end
+    end
+    local listed = {}
+    for _, name in ipairs(targets.npcs) do listed[name] = true end
     for _, npc in ipairs(questNPCs(quest)) do
-        local listed = false
-        for _, name in ipairs(targets.npcs) do listed = listed or name == npc.name end
-        if not listed and Advance.Mentions(step.text, npc.name) then
-            targets.npcs[#targets.npcs + 1] = npc.name
-            hasNPC = true
-            if npc.info.x ~= nil and NAV_PRIORITY.npc < navRank then
-                targets.nav, navRank = spotOf(quest, index, npc.info, npc.name), NAV_PRIORITY.npc
+        if not listed[npc.name] and Advance.Mentions(step.text, npc.name) then
+            listed[npc.name] = true
+            addNPC(npc)
+        end
+    end
+    if not hasNPC then
+        local fits, fitting = 0, nil
+        for _, npc in ipairs(questNPCs(quest)) do
+            if not listed[npc.name] and Advance.MentionsPart(step.text, npc.name) then
+                fits, fitting = fits + 1, npc
             end
         end
+        if fits == 1 then addNPC(fitting) end
     end
     if not hasNPC and refersBack(step) then
         for back = index - 1, math.max(1, index - INHERIT_LOOKBACK), -1 do
@@ -636,6 +706,30 @@ function stepTargets(quest, index)
         local lode = Travel.Named(step.text)
         if lode then targets.nav = { x = lode.x, y = lode.y, plane = 0 } end
     end
+    -- "Head inside the room to the north", "Run south to the farming
+    -- patches": no place, but a side. Roughly that way from the last place
+    -- (dots, no marker, a wider "arrived").
+    if targets.nav == nil and travel then
+        local dir = Advance.CompassIn(step.text)
+        local from = nil
+        for back = index - 1, math.max(1, index - INHERIT_LOOKBACK), -1 do
+            local earlier = stepTargets(quest, back).nav
+            if earlier ~= nil and not earlier.rough then
+                from = earlier
+                break
+            end
+        end
+        if dir ~= nil and from ~= nil then
+            targets.nav = { x = from.x + dir[1] * TUNE.roughTiles, y = from.y + dir[2] * TUNE.roughTiles, plane = from.plane,
+                rough = true }
+        end
+    end
+    -- "Go to the cave" with "Talk to Bob" (mapped) next: the cave is there.
+    local nextEntry = list[index + 1]
+    if targets.nav == nil and travel and nextEntry ~= nil and not Advance.IsTravelStep(nextEntry.step) then
+        local near = roughSpot(nextEntry.step)
+        if near ~= nil then targets.nav = { x = near.x, y = near.y, rough = true } end
+    end
     entry.targets = targets
     return targets
 end
@@ -670,10 +764,20 @@ local SIDE_TESTS = {
     north = function(_, dz) return dz > 0 end, south = function(_, dz) return dz < 0 end,
 }
 
+-- Only near where an "Enter ..." step happens: not every gate on the way there.
+local function nearEntrance(nav)
+    local here = World.playerTile
+    return nav == nil or here == nil or math.abs(here.x - nav.x) + math.abs(here.z - nav.y) <= ENTER_NEAR
+end
+
 local function sceneryMatcher(entry)
     if entry == nil then return nil end
     local step = entry.step
-    if Advance.IsTravelStep(step) then return nil end
+    local quest = currentQuest()
+    local nav = quest and stepTargets(quest, entry.index).nav
+    -- "Go to the western room and mine an elemental rock" still outlines the
+    -- rock, and so does "Head east to a stone door" with no map spot to show.
+    if Advance.TravelFinishes(step) and nav ~= nil then return nil end
     local linked = {}
     for _, page in ipairs(step.npcs or {}) do
         linked[#linked + 1] = { name = Advance.BaseName(page), kind = (pages[page:lower()] or {}).kind }
@@ -681,8 +785,6 @@ local function sceneryMatcher(entry)
     local enter, direction = Advance.IsEnterStep(step), Advance.ClimbDirection(step)
     local ore = Advance.MinedOre(step)
     local goals = Advance.ClimbGoals(step)
-    local quest = currentQuest()
-    local nav = quest and stepTargets(quest, entry.index).nav
     -- Sub-bullets count when the step introduces a list ("...from the
     -- following crates:" then "- Up a ladder in the middle of the gate"), or
     -- when they're about the step's items ("Bars can be withdrawn at the
@@ -707,13 +809,16 @@ local function sceneryMatcher(entry)
     -- Named as the thing to click, or just a landmark? "Search the crate"
     -- outlines crates; "Talk to Adam, north of the well" doesn't outline wells.
     local function namesObject(name)
+        local object, landmark = Advance.MentionRoles(source, name)
         for _, page in ipairs(step.npcs or {}) do
-            if Advance.BaseName(page) == name then return true end
+            -- Linked, but only where it is: "Climb the ladder behind the altar".
+            if Advance.BaseName(page) == name then return object > 0 or landmark == 0 end
         end
         for _, other in ipairs(step.inheritedNpcs or {}) do
             if Advance.BaseName(other) == name then return true end
         end
-        return #name >= 4 and Advance.MentionRoles(source, name) > 0
+        -- Three letters is enough: "Search the bed", "Open the box".
+        return #name >= 3 and object > 0
     end
     -- "stairs" in a guide can be a "Staircase" in game: match by kind, unless
     -- they're only where something is ("Talk to Straven near the stairs").
@@ -722,43 +827,65 @@ local function sceneryMatcher(entry)
         local asObject, asLandmark = Advance.MentionRoles(source, kind, true)
         if text:find(kind, 1, true) and (asObject > 0 or asLandmark == 0) then climbKinds[#climbKinds + 1] = kind end
     end
+    -- Which one of several the step means ("the lever by the water wheel"):
+    -- asked per scene name, as "Crates", "crate" and "crates" alike.
+    local placements = {}
+    local function place(name)
+        if placements[name] == nil then
+            local last = name:match("(%a+)$") or ""
+            placements[name] = Advance.Placement(source, name) or Advance.Placement(source, (name:gsub("s$", "")))
+                or Advance.Placement(source, (name:gsub("es$", "")))
+                or (#last >= 4 and last ~= name and Advance.Placement(source, last)) or false
+        end
+        return placements[name] or nil
+    end
     return function(loc)
         local name = Advance.Clean(loc.displayName or "")
         if name == "" then return false end
         if enter then
-            -- Only near where the step happens: not every gate on the way there.
-            local here = World.playerTile
-            if nav ~= nil and here ~= nil and math.abs(here.x - nav.x) + math.abs(here.z - nav.y) > ENTER_NEAR then
-                return false
-            end
-            -- "Enter the cave": the cave entrance. Otherwise doors and gates
-            -- (a trapdoor only when the step says so).
-            if namesObject(name) or namesObject(name:match("^(%S+)") or "") then return true end
-            return (name:find("door") ~= nil and not name:find("trapdoor")) or name:find("gate") ~= nil
+            -- "Enter the cave": the cave entrance. When nothing it names is
+            -- in sight, the doors and gates there (fallbackMatcher).
+            return nearEntrance(nav) and (namesObject(name) or namesObject(name:match("^(%S+)") or ""))
         end
         -- "Mine a blurite ore": the rocks with that ore.
         if ore ~= nil and name:find(ore, 1, true) and name:find("rock", 1, true) then return true end
-        local climbable = false
+        local climbable, anyClimb = false, false
         for _, kind in ipairs(climbKinds) do climbable = climbable or name:find(kind, 1, true) ~= nil end
+        for _, goal in ipairs(goals) do anyClimb = anyClimb or name:find(goal.kind, 1, true) ~= nil end
         -- "Climb the ladder to the east, then the first staircase to the
-        -- west": the climb that's next, on the side it says.
-        if #goals > 0 and climbKinds[1] ~= nil then
-            local goal = goals[math.min(climbsDone + 1, #goals)]
+        -- west": the climb that's next, on the side it says. Other things
+        -- the step names ("Unlock the Prison Door and climb down the
+        -- staircase") are outlined as well.
+        if (climbable or anyClimb) and #goals > 0 and climbKinds[1] ~= nil then
+            -- "Go upstairs and search the wardrobe": up there, the stairs
+            -- back down aren't the way on.
+            if climbsDone >= #goals then return false end
+            local goal = goals[climbsDone + 1]
             if not name:find(goal.kind, 1, true) then return false end
             local here, there = World.playerTile, nil
             pcall(function() there = { x = loc.position.x / 512, z = loc.position.z / 512 } end)
             local side = goal.side and SIDE_TESTS[goal.side]
             if side and here and there and not side(there.x - here.x, there.z - here.z) then return false end
-        elseif not climbable and not namesObject(name) then
+        -- "Elemental rocks" for "mine an elemental rock" (not plain "Rocks"
+        -- for "the sharp rock").
+        elseif not climbable and not namesObject(name)
+            and not (name:find(" ", 1, true) and namesObject(Advance.Singular(name))) then
             return false
         end
+        -- A "Falador" sign or lodestone isn't the town the step names, and a
+        -- plain "Rock" isn't the "blurite rock" it links (but "Search the
+        -- chest" still outlines the chest when the bank chest is linked too).
+        local linkedItself = false
         for _, page in ipairs(linked) do
-            -- A "Falador" sign or lodestone isn't the town the step names, and
-            -- a plain "Rock" isn't the "blurite rock" it links.
             if page.name == name and (page.kind == "location" or page.kind == "place") then return false end
-            if page.name ~= name and page.name:find(name, 1, true) then return false end
+            linkedItself = linkedItself or page.name == name
         end
-        if direction == "down" or direction == "up" then
+        for _, page in ipairs(linked) do
+            if not linkedItself and page.name ~= name and page.name:find(name, 1, true) then return false end
+        end
+        -- Only the climb's own ladders and stairs go by direction: the crate
+        -- in "Search the crate, then climb down" has no "down" in its menu.
+        if (climbable or anyClimb) and (direction == "down" or direction == "up") then
             local ops = ""
             pcall(function()
                 for _, op in pairs(loc.config.opNames) do ops = ops .. " " .. tostring(op):lower() end
@@ -766,19 +893,31 @@ local function sceneryMatcher(entry)
             if ops ~= "" and not ops:find(direction, 1, true) then return false end
         end
         return true
-    end
+    end, place
 end
 
 -- Upstairs, when the step's target isn't in sight, the way on is usually
 -- the stairs: steps right after a climb fall back to outlining them.
 local function climbMatcher(loc)
+    if World.playerTile == nil or (World.playerTile.level or 0) == 0 then return false end
     local name = Advance.Clean(loc.displayName or "")
     return name:find("stair", 1, true) ~= nil or name:find("ladder", 1, true) ~= nil
 end
 
+-- What's outlined when nothing the step names is in sight: for "Enter the
+-- manor", the doors and gates there (a trapdoor only when the step says so);
+-- upstairs after a climb, the stairs.
 local function fallbackMatcher(quest, index)
     local list = flatSteps[quest.key]
     if list[index] == nil or Advance.IsTravelStep(list[index].step) then return nil end
+    if Advance.IsEnterStep(list[index].step) then
+        local nav = stepTargets(quest, index).nav
+        return function(loc)
+            local name = Advance.Clean(loc.displayName or "")
+            return nearEntrance(nav) and ((name:find("door") ~= nil and not name:find("trapdoor"))
+                or name:find("gate") ~= nil)
+        end
+    end
     for back = index - 1, math.max(1, index - 2), -1 do
         if Advance.ClimbDirection(list[back].step) ~= nil then return climbMatcher end
     end
@@ -862,28 +1001,50 @@ local function stepItems(quest, entry)
     return items
 end
 
+-- "Locations:" with the places as sub-bullets: a list step. Alt+D ticks
+-- its sub-bullets one at a time (subDone) before moving on.
+local function isListStep(step)
+    return step.text:match(":%s*$") ~= nil and #(step.subs or {}) > 0
+end
+local function subsDone(entry)
+    return subDone[tostring(questKey) .. ":" .. entry.index] or 0
+end
+
 -- A step as paragraphs ({ text, colour, indent }) for the card and the
 -- panel: the instruction, the chat options, notes indented under it, then
 -- what to bring and what to get, each item checked against the backpack
--- (left off steps already `done`).
+-- (left off steps already `done`). The compact card keeps the instruction,
+-- chat and missing items only.
 local function stepBlocks(quest, entry, forCard, done)
     if entry == nil then return { { text = "All steps done. Pick another quest from the list." } } end
     local step = entry.step
     local bring = stepItems(quest, entry)
+    local compact = forCard and pref("cardDetail", "full") == "compact"
+    local listStep = isListStep(step)
     local blocks = { { text = View.Escape(Advance.WithoutPictureRefs(step.text)) } }
-    if step.chat then blocks[#blocks + 1] = { text = "Chat: " .. View.Escape(step.chat), colour = "chat" } end
+    if forCard and #blocks[1].text > TUNE.cardTextMax then
+        local cut = blocks[1].text:sub(1, TUNE.cardTextMax):match("^(.*)%s") or blocks[1].text:sub(1, TUNE.cardTextMax)
+        blocks[1].text = cut .. "... " .. View.Col("muted", "(more in the panel)")
+    end
+    if step.chat then blocks[#blocks + 1] = { text = "Chat: " .. View.Escape(Probe.ChatLabel(step.chat)), colour = "chat" } end
+    if Advance.HasPictureRef(step.text) and not done then
+        blocks[#blocks + 1] = { text = "The wiki shows a picture for this step.", colour = "muted", indent = 1 }
+    end
     if step.tile and not forCard then
         blocks[#blocks + 1] = { text = string.format("Map %d,%d", step.tile.x, step.tile.y), colour = "green" }
     end
     local shown, hidden = 0, 0
-    for _, sub in ipairs(step.subs or {}) do
-        if done or not entry.hintSubs[sub] then
+    local ticked = (listStep and not done) and subsDone(entry) or -1
+    for i, sub in ipairs(step.subs or {}) do
+        if (done or not entry.hintSubs[sub]) and not (compact and not listStep) then
             shown = shown + 1
             if forCard and shown > CARD_SUBS then
                 hidden = hidden + 1
             else
-                blocks[#blocks + 1] = { text = "- " .. View.Escape(Advance.WithoutPictureRefs(sub.text)) ..
-                    (sub.chat and (" " .. View.Col("chat", "Chat: " .. View.Escape(sub.chat))) or ""), colour = "muted", indent = 1 }
+                local mark, colour = "- ", "muted"
+                if i <= ticked then mark = "[done] " elseif i == ticked + 1 then mark, colour = "> ", "gold" end
+                blocks[#blocks + 1] = { text = mark .. View.Escape(Advance.WithoutPictureRefs(sub.text)) ..
+                    (sub.chat and (" " .. View.Col("chat", "Chat: " .. View.Escape(sub.chat))) or ""), colour = colour, indent = 1 }
             end
         end
     end
@@ -891,6 +1052,16 @@ local function stepBlocks(quest, entry, forCard, done)
         blocks[#blocks + 1] = { text = string.format("- and %d more in the panel", hidden), colour = "muted", indent = 1 }
     end
     if done then return blocks end
+    if compact then
+        local missing = {}
+        for _, item in ipairs(bring) do
+            if not item.recommended and backpack ~= nil and checkable(item.need)
+                and Advance.HaveCount(backpack, item.need) < (item.qty or item.need.qty or 1) then
+                missing[#missing + 1] = item
+            end
+        end
+        bring = missing
+    end
     if #bring > 0 then
         blocks[#blocks + 1] = { text = "Bring:", colour = "gold" }
         for _, b in ipairs(itemBlocks(bring, 1, false)) do blocks[#blocks + 1] = b end
@@ -918,10 +1089,10 @@ local function drawCard()
     local list = flatSteps[quest.key]
     local blocks = stepBlocks(quest, entry, true)
     if travelHint ~= nil then
-        table.insert(blocks, 1, { colour = "gold", text = string.format(
-            "Teleport: %s lodestone, then about %d tiles on foot.", travelHint.name, travelHint.walk) })
+        table.insert(blocks, 1, { colour = "gold", text = travelHint.own and ("Teleport: " .. travelHint.name .. ", as the step says.")
+            or string.format("Teleport: %s lodestone, then about %d tiles on foot.", travelHint.name, travelHint.walk) })
     end
-    Card.Show(string.format("%s  %d / %d", quest.name, math.min(currentIndex(), #list), #list),
+    Card.Show(Card.Title(quest.name, string.format("%d / %d", math.min(currentIndex(), #list), #list)),
         blocks, (currentIndex() - 1) / math.max(1, #list))
 end
 
@@ -929,6 +1100,10 @@ end
 
 local panelRoot, panelBody, panelSignature = nil, nil, nil
 local focusedStep = nil -- "quest:step" the panel last scrolled to
+-- resizedAt: serverTick of the last ONRESIZE on the panel; width: the
+-- panel's width at the last redraw; listScroll: where the quest list was
+-- scrolled to when a guide was opened.
+local panelState = { resizedAt = nil, width = nil, listScroll = 0 }
 local buildRows -- defined below; describes the current screen as rows
 
 -- Redraw the panel if what it shows changed. Cheap to call often.
@@ -938,6 +1113,7 @@ local function refreshPanel()
     if not ok then return end
     local signature = View.Signature(rows)
     if signature == panelSignature and panelBody ~= nil then return end
+    panelState.width = safe(function() return panelRoot.width end)
     panelSignature = signature
     local stepKey = screen == "guide" and (tostring(questKey) .. ":" .. currentIndex()) or nil
     local focus = stepKey ~= nil and stepKey ~= focusedStep
@@ -1102,8 +1278,9 @@ local function setStep(index, why, source)
     PersistentDB:SetStructuredData(DB_STEPS, stepIndex)
     if why then reports.auto = string.format("Auto: step %d (%s)", stepIndex[questKey], why) end
     local targets = stepTargets(quest, currentIndex())
-    World.SetTargets(targets.npcs, sceneryMatcher(currentEntry()), targets.nav, fallbackMatcher(quest, currentIndex()))
-    local nav = targets.nav and (targets.nav.x .. "," .. targets.nav.y) or "none"
+    local match, place = sceneryMatcher(currentEntry())
+    World.SetTargets(targets.npcs, match, targets.nav, fallbackMatcher(quest, currentIndex()), place)
+    local nav = targets.nav and (targets.nav.x .. "," .. targets.nav.y .. (targets.nav.rough and " rough" or "")) or "none"
     Diag.Snapshot("stepTargets", string.format("step %d npcs=%s items=%s nav=%s", currentIndex(),
         table.concat(targets.npcs, "|"), table.concat(targets.items, "|"), nav))
     if from ~= currentIndex() or source ~= nil then
@@ -1118,12 +1295,16 @@ local function setStep(index, why, source)
 end
 
 local function openQuest(key)
+    if screen ~= "guide" then panelState.listScroll = View.ScrollOffset() end
     questKey = key
     screen = "guide"
     lastVarValue = progressValue(questByKey[key])
     finishedSeen = questStatus(questByKey[key]) == "complete"
     PersistentDB:SetString(DB_QUEST, key)
     Recorder.Add("open", key, currentIndex(), questStatus(questByKey[key]), lastVarValue)
+    -- Start at the top (status, items needed), not at the current step: the
+    -- panel only scrolls to a step once it changes while the guide is open.
+    focusedStep = key .. ":" .. currentIndex()
     View.ScrollToTop()
     setStep(currentIndex())
 end
@@ -1132,10 +1313,15 @@ end
 local function restartQuest(quest)
     stepIndex[quest.key] = nil
     varLog[quest.key] = nil
+    for key in pairs(subDone) do
+        if key:sub(1, #quest.key + 1) == quest.key .. ":" then subDone[key] = nil end
+    end
+    PersistentDB:SetStructuredData("subDone", subDone)
     PersistentDB:SetStructuredData(DB_VARLOG, varLog)
     lastVarValue = progressValue(quest)
     finishedSeen = questStatus(quest) == "complete"
     reports.auto = "Restarted from step 1."
+    focusedStep = quest.key .. ":1"
     View.ScrollToTop()
     setStep(1, nil, "restart")
 end
@@ -1157,6 +1343,12 @@ local function flagProblem(how)
 end
 
 -- Something was clicked in the game world or an interface.
+-- "Search the crate", "Pull the lever": clicking the thing the step is
+-- about finishes it, a few ticks later, unless the game says nothing
+-- happened ("You find nothing", "The door is locked").
+local pendingClick = nil -- { index, tick, subject }
+local noteOwnClick -- defined below (needs acquireWants)
+
 local function onInteraction(event)
     local entry = event.entry
     local verb = safe(function() return entry.verbText end) or ""
@@ -1195,6 +1387,10 @@ local function onInteraction(event)
     local index = Advance.MatchInteraction(flatSteps[quest.key], currentIndex(), verb, subject)
     if index ~= nil and index > currentIndex() then
         setStep(index, "you used " .. Advance.Clean(subject))
+        return
+    end
+    if MiniMenuEntryType ~= nil and entryType == MiniMenuEntryType.LOC then
+        noteOwnClick(quest, Advance.Clean(verb), cleanSubject)
     end
 end
 
@@ -1208,10 +1404,11 @@ local function onVarChange(quest, oldValue, newValue)
     PersistentDB:SetStructuredData(DB_VARLOG, varLog)
     if not Edition.release then log("[rs3qb] " .. quest.name .. " progress " .. entries[#entries]) end
     local rose = type(newValue) == "number" and type(oldValue) == "number" and newValue > oldValue
-    -- Handing items over already moved the step; the var moving a tick
-    -- later is the same event (Thurgo taking the pie), not the next step.
-    local justHandedOver = serverTick - lastHandover <= HANDOVER_VAR_TICKS
-    if pref("auto", true) and rose and not justHandedOver and currentIndex() <= #flatSteps[quest.key] then
+    -- The backpack already moved the step; the var moving a tick later is
+    -- the same event (Thurgo taking the pie, cutting the key out of the
+    -- book), not the next step.
+    local sameEvent = serverTick - lastItemStep <= ITEM_VAR_TICKS
+    if pref("auto", true) and rose and not sameEvent and currentIndex() <= #flatSteps[quest.key] then
         setStep(currentIndex() + 1, "quest progress moved")
     end
 end
@@ -1297,18 +1494,21 @@ local function onBackpackChange()
     local quest, entry = currentQuest(), currentEntry()
     if pref("auto", true) and quest ~= nil and entry ~= nil and backpack ~= nil then
         local list = flatSteps[quest.key]
+        local function itemStep(index, why)
+            lastItemStep = serverTick
+            setStep(index, why)
+        end
         local handed = before ~= nil and handedOver(quest, entry, before)
         if handed then
-            lastHandover = serverTick
-            setStep(currentIndex() + 1, "handed over the " .. handed)
+            itemStep(currentIndex() + 1, "handed over the " .. handed)
             return
         end
         if Advance.IsAcquireStep(entry.step) and acquireDone(quest, entry) then
-            setStep(currentIndex() + 1, "got the items")
+            itemStep(currentIndex() + 1, "got the items")
             return
         end
         if Advance.IsMakeStep(entry.step) and makeDone(quest, currentIndex()) then
-            setStep(currentIndex() + 1, "made the items")
+            itemStep(currentIndex() + 1, "made the items")
             return
         end
         if before ~= nil then
@@ -1316,7 +1516,7 @@ local function onBackpackChange()
                 local later = list[i]
                 if Advance.IsAcquireStep(later.step) and gained(before, acquireWants(quest, later))
                     and acquireDone(quest, later) then
-                    setStep(i + 1, "got the items")
+                    itemStep(i + 1, "got the items")
                     return
                 end
             end
@@ -1325,7 +1525,7 @@ local function onBackpackChange()
                 and not Advance.IsTravelStep(entry.step) then
                 for name, count in pairs(backpack) do
                     if count > 0 and (before[name] or 0) == 0 and Advance.Mentions(nextEntry.step.text, name) then
-                        setStep(currentIndex() + 1, "got the " .. name)
+                        itemStep(currentIndex() + 1, "got the " .. name)
                         return
                     end
                 end
@@ -1339,6 +1539,58 @@ end
 -- Where the player was last tick, to notice stairs/ladders (a level change
 -- or a big jump, e.g. into a basement area).
 local lastPlayerSpot = nil
+-- Is this click the current step's own thing to do? The step's main action
+-- is a click verb, it isn't waiting for an item or using one, and the
+-- object is one the step outlines (so "Search the crate" on a crate, not on
+-- the chest beside it).
+local function ownClickStep(quest, entry)
+    local step = entry.step
+    local action = Advance.MainAction(step)
+    if action == nil or not Advance.CLICK_VERBS[action] then return false end
+    if Advance.IsUseStep(step) or Advance.IsMakeStep(step) or #acquireWants(quest, entry) > 0 then return false end
+    -- "Search the cupboard" with "Give Thurgo the portrait" next: the
+    -- portrait turning up finishes it (onBackpackChange), not the click. So
+    -- for any next step that hands over or uses something.
+    local nextEntry = flatSteps[quest.key][entry.index + 1]
+    if nextEntry ~= nil then
+        local first = nextEntry.step.text:lower():match("^%s*(%a+)") or ""
+        if (HANDOVER_VERBS[first] and first ~= "talk") or Advance.IsUseStep(nextEntry.step)
+            or #stepTargets(quest, entry.index + 1).items > 0 then
+            return false
+        end
+    end
+    return #Advance.ItemsMentioned(step, neededParsed(quest)) == 0 and #producedItems(quest, entry.index) == 0
+end
+
+noteOwnClick = function(quest, verb, subject)
+    local entry = currentEntry()
+    if entry == nil or verb == "use" or verb == "examine" or verb == "walk here" then return end
+    if not ownClickStep(quest, entry) then return end
+    local match = sceneryMatcher(entry)
+    if match == nil then return end
+    local here = World.playerTile or { x = 0, z = 0 }
+    local ok, hit = pcall(match, { displayName = subject, config = { opNames = { verb } },
+        position = { x = here.x * 512, y = 0, z = here.z * 512 } })
+    if ok and hit then pendingClick = { index = currentIndex(), tick = serverTick, subject = subject } end
+end
+
+-- A few ticks after such a click, with no "nothing happens" line and the
+-- step still the same (the quest var may have moved it already), move on.
+local function checkPendingClick()
+    if pendingClick == nil then return end
+    if currentQuest() == nil or pendingClick.index ~= currentIndex() then
+        pendingClick = nil
+        return
+    end
+    if serverTick - pendingClick.tick < TUNE.clickSettle then return end
+    local subject = pendingClick.subject
+    pendingClick = nil
+    if pref("auto", true) then
+        lastItemStep = serverTick -- the quest var moving right after is the same event
+        setStep(currentIndex() + 1, "you clicked the " .. subject)
+    end
+end
+
 local CLIMB_JUMP_TILES = 20
 local FOUND_DISTANCE = 8 -- tiles from what an "until ... seen" step looks for
 
@@ -1401,7 +1653,8 @@ local function checkPosition()
     if Advance.TravelFinishes(step) then
         local nav = stepTargets(quest, currentIndex()).nav
         local distance = nav and World.DistanceTo(nav)
-        if distance ~= nil and distance <= ARRIVED_DISTANCE then setStep(currentIndex() + 1, "arrived") end
+        local near = nav and nav.rough and TUNE.arrivedRough or ARRIVED_DISTANCE
+        if distance ~= nil and distance <= near then setStep(currentIndex() + 1, "arrived") end
     end
 end
 
@@ -1416,6 +1669,7 @@ end
 -- only in a build that has it (see edition.lua).
 local function guidance(name) return Edition.guidance and pref(name, true) end
 local function applyGuidance()
+    Card.SetSize(pref("cardSize", "medium"))
     World.pathEnabled = guidance("path")
     World.beaconEnabled = guidance("beacon")
     World.dotSize = DOT_SIZES[pref("dots", "medium")] or DOT_SIZES.medium
@@ -1456,8 +1710,23 @@ local function settingsRows()
             toggle("Card", "card", true, drawCard),
             toggle("Auto", "auto", true),
         } },
+        { kind = "buttons", buttons = {
+            { label = "Card detail: " .. pref("cardDetail", "full"), press = function()
+                setPref("cardDetail", pref("cardDetail", "full") == "full" and "compact" or "full")
+                drawCard()
+                refreshPanel()
+            end },
+            { label = "Card size: " .. pref("cardSize", "medium"), press = function()
+                setPref("cardSize", LIST.nextCardSize[pref("cardSize", "medium")] or "medium")
+                Card.SetSize(pref("cardSize", "medium"))
+                drawCard()
+                refreshPanel()
+            end },
+        } },
         { kind = "text", colour = "muted", text = "Card: the current step on the game screen. Auto: move on " ..
-            "by itself when you do a step (talk, pick up, climb, arrive). \"Done, next\" always works." },
+            "by itself when you do a step (talk, pick up, climb, arrive). \"Done, next\" always works. " ..
+            "Card detail: compact keeps the instruction, chat and missing items; notes and owned items stay in the " ..
+            "panel. Card size: a share of the screen width." },
     }
     if Edition.guidance then
         rows[#rows + 1] = { kind = "heading", text = "Finding the way" }
@@ -1504,6 +1773,26 @@ local function listRows()
         { kind = "text", text = CREDITS, colour = "muted" },
         { kind = "spacer" },
     }
+    -- Filter by status, and jump to a first letter.
+    local filter = pref("listFilter", "all")
+    local filterButtons = {}
+    for _, name in ipairs(LIST.filters) do
+        filterButtons[#filterButtons + 1] = { label = (filter == name and "> " or "") .. LIST.labels[name],
+            press = function()
+                setPref("listFilter", name)
+                View.ScrollToTop()
+                refreshPanel()
+            end }
+    end
+    rows[#rows + 1] = { kind = "buttons", buttons = filterButtons }
+    local groupRow = {}
+    local jumpButtons = {}
+    for _, group in ipairs(LIST.groups) do
+        jumpButtons[#jumpButtons + 1] = { label = group[1], press = function()
+            if groupRow[group[1]] then View.ScrollToRow(groupRow[group[1]]) end
+        end }
+    end
+    rows[#rows + 1] = { kind = "buttons", buttons = jumpButtons }
     -- The ones you're doing first, then the rest A to Z, finished ones last.
     local order = { started = 1, complete = 3 }
     local sorted = {}
@@ -1512,22 +1801,41 @@ local function listRows()
         if a.rank ~= b.rank then return a.rank < b.rank end
         return a.at < b.at
     end)
+    local shown = 0
     for _, item in ipairs(sorted) do
         local quest = item.quest
+        local status = questStatus(quest)
         local list = flatSteps[quest.key]
         local done = math.min((math.tointeger(stepIndex[quest.key] or 1) or 1) - 1, #list)
-        local look = STATUS_LOOK[questStatus(quest)] or { questStatus(quest), "muted" }
-        local status = look[1]
-        if done > 0 and look[1] ~= "Done" then status = string.format("%s  %d/%d", look[1], done, #list) end
-        rows[#rows + 1] = { kind = "quest", name = quest.name, status = status, statusColour = look[2],
-            press = function() openQuest(quest.key) end }
+        -- "Started": by the game, or steps ticked here.
+        local started = status == "started" or (done > 0 and status ~= "complete")
+        local wanted = filter == "all" or (filter == "started" and started)
+            or (filter == "done" and status == "complete")
+            or (filter == "todo" and not started and status ~= "complete")
+        if wanted then
+            local look = STATUS_LOOK[status] or { status, "muted" }
+            local label = look[1]
+            if done > 0 and look[1] ~= "Done" then label = string.format("%s  %d/%d", look[1], done, #list) end
+            rows[#rows + 1] = { kind = "quest", name = quest.name, status = label, statusColour = look[2],
+                press = function() openQuest(quest.key) end }
+            shown = shown + 1
+            -- The first A to Z row of each letter group, for the jump buttons.
+            local first = quest.name:sub(1, 1):upper()
+            for _, group in ipairs(LIST.groups) do
+                if item.rank == 2 and groupRow[group[1]] == nil and first >= group[2] and first <= group[3] then
+                    groupRow[group[1]] = #rows
+                end
+            end
+        end
     end
+    if shown == 0 then rows[#rows + 1] = { kind = "text", text = "No quests match this filter.", colour = "muted" } end
     return rows
 end
 
 -- What the test build's devtools.lua gets to work with.
 local devApp = {
     reports = reports, varLog = varLog, questInfo = questInfo, currentQuest = currentQuest,
+    questTypeFor = questTypeFor, windowSizeEvents = 0,
     currentEntry = currentEntry, stepCandidates = stepCandidates, ownInterfaces = ownInterfaces,
     learnDialogInterface = learnDialogInterface, updateOptionMarks = updateOptionMarks,
     refreshPanel = function() refreshPanel() end,
@@ -1541,10 +1849,11 @@ local function guideRows()
         { kind = "buttons", buttons = {
             { label = "Quest list", press = function()
                 screen = "list"
-                View.ScrollToTop()
                 refreshPanel()
+                View.ScrollTo(panelState.listScroll) -- back where the list was
             end },
             settingsButton(),
+            { label = "Current step", press = function() View.ScrollToAnchor() end },
         } },
         { kind = "title", text = quest.name },
     }
@@ -1589,6 +1898,11 @@ local function guideRows()
         end }
     end
     rows[#rows + 1] = { kind = "buttons", buttons = overviewButtons }
+    local requirements = showOverview and requirementBlocks(quest) or {}
+    if #requirements > 0 then
+        rows[#rows + 1] = { kind = "heading", text = "Requirements" }
+        rows[#rows + 1] = { kind = "blocks", blocks = requirements }
+    end
     if showOverview and #items > 0 then
         rows[#rows + 1] = { kind = "heading", text = "Items needed" }
         rows[#rows + 1] = { kind = "blocks", blocks = items }
@@ -1666,6 +1980,10 @@ end
 -- The game clears the layer right before this fires, so build from scratch.
 Event.ContentLayerReady.Subscribe("rs3qb-panel", function(event)
     panelRoot, panelBody, panelSignature = event.component, nil, nil
+    -- Resizing the panel changes where text wraps: redraw once it settles.
+    pcall(function()
+        panelRoot:Subscribe(ui.Hook.ONRESIZE, "rs3qb-resize", function() panelState.resizedAt = serverTick end)
+    end)
     -- Drop any learned "dialogue" interface that is really our own panel.
     for i = #dialogInterfaces, 1, -1 do
         if ownInterfaces()[dialogInterfaces[i]] then table.remove(dialogInterfaces, i) end
@@ -1770,15 +2088,25 @@ local function updateTravelHint()
     if quest ~= nil and entry ~= nil and not inCutscene then
         local nav = stepTargets(quest, currentIndex()).nav
         local spot = playerSpot()
-        if nav ~= nil and spot ~= nil and guidance("teleport") then hint = Travel.Suggest(spot.x, spot.z, nav.x, nav.y) end
+        -- "Teleport to the laboratories via Drakan's medallion": the step's
+        -- own teleport, not a lodestone; the dots take over once close.
+        local own = Advance.NamedTeleport(entry.step.text)
+        if own ~= nil then
+            local distance = nav ~= nil and spot ~= nil and math.sqrt((spot.x - nav.x) ^ 2 + (spot.z - nav.y) ^ 2) or nil
+            hint = { name = own, own = true, far = distance == nil or distance > TUNE.ownTeleportFar }
+        elseif nav ~= nil and spot ~= nil and guidance("teleport") then
+            hint = Travel.Suggest(spot.x, spot.z, nav.x, nav.y)
+        end
     end
+    local suppress = hint ~= nil and (not hint.own or hint.far)
     if (hint and hint.name) == (travelHint and travelHint.name) then
-        travelHint = hint -- same lodestone; the walking distance may have changed
+        travelHint = hint -- same hint; the walking distance may have changed
+        World.pathSuppressed = suppress
         return
     end
     travelHint = hint
-    World.pathSuppressed = hint ~= nil
-    Card.SetFloating(hint and ("Teleport to " .. hint.name .. " lodestone") or nil)
+    World.pathSuppressed = suppress
+    Card.SetFloating(hint and (hint.own and ("Teleport: " .. hint.name) or ("Teleport to " .. hint.name .. " lodestone")) or nil)
     Recorder.Add("hint", hint and hint.name or "")
     drawCard()
 end
@@ -1803,6 +2131,7 @@ Event.ServerLogic.Subscribe("rs3qb-tick", function()
         updateOptionMarks()
         updateItemMarks()
         if not inCutscene then checkPosition() end
+        checkPendingClick()
         if World.lastMarked ~= lastMarkedSaved then
             lastMarkedSaved = World.lastMarked
             Diag.Snapshot("marked", World.lastMarked)
@@ -1815,9 +2144,23 @@ Event.ServerLogic.Subscribe("rs3qb-tick", function()
             finishedSeen = true
             if pref("auto", true) then setStep(#flatSteps[quest.key] + 1, "quest complete") end
         end
+        -- In case ONRESIZE never fires: notice a changed width now and then.
+        if panelState.resizedAt == nil and panelRoot ~= nil and serverTick % WALL_STATS_EVERY == 0
+            and safe(function() return panelRoot.width end) ~= panelState.width then
+            panelState.resizedAt = serverTick
+        end
+        if panelState.resizedAt ~= nil and serverTick - panelState.resizedAt >= TUNE.resizeSettle then
+            panelState.resizedAt, panelSignature = nil, nil
+        end
         refreshPanel() -- no-op unless something shown changed
     end)
     Diag.Guard("record dialogue", recordDialogue)
+end)
+
+-- The game window changed size: the card refits itself on the next tick.
+Event.WindowSizeChanged.Subscribe("rs3qb-window", function()
+    devApp.windowSizeEvents = devApp.windowSizeEvents + 1
+    Diag.Guard("window", Card.OnWindowResized)
 end)
 
 Event.Logic.Subscribe("rs3qb-card", function()
@@ -1836,7 +2179,17 @@ Event.KeyDown.Subscribe("rs3qb-keys", function(event)
     Diag.Guard("hotkey", function()
         if event.isRepeat or GameKey == nil or ModifierKey == nil or currentQuest() == nil then return end
         if event.gameKey == GameKey.D and (event.modifiers & ModifierKey.ALT) ~= 0 then
-            setStep(currentIndex() + 1, "Alt+D", "Alt+D")
+            local entry = currentEntry()
+            if entry ~= nil and isListStep(entry.step) and subsDone(entry) + 1 < #entry.step.subs then
+                -- "Locations:" with three places: one place per press.
+                subDone[tostring(questKey) .. ":" .. entry.index] = subsDone(entry) + 1
+                PersistentDB:SetStructuredData("subDone", subDone)
+                reports.auto = string.format("Alt+D: %d of %d done on this step", subsDone(entry), #entry.step.subs)
+                drawCard()
+                refreshPanel()
+            else
+                setStep(currentIndex() + 1, "Alt+D", "Alt+D")
+            end
         elseif event.gameKey == GameKey.F and (event.modifiers & ModifierKey.ALT) ~= 0 then
             flagProblem("Alt+F")
         end
@@ -1873,6 +2226,15 @@ local function onChat(event)
     end
     if lower:find("quest complete", 1, true) then
         reports.chat = "Quest complete message seen: " .. View.Escape(message)
+    end
+    -- "You find nothing": the click on the step's object didn't do it.
+    if pendingClick ~= nil then
+        for _, phrase in ipairs(Advance.NOTHING_MESSAGES) do
+            if lower:find(phrase, 1, true) then
+                pendingClick = nil
+                break
+            end
+        end
     end
     -- A fight step ends when the game says the target died.
     local entry = currentEntry()
@@ -1934,7 +2296,7 @@ if RS3QB_REPLAY ~= nil then
         flatSteps = flatSteps, stepTargets = stepTargets, sceneryMatcher = sceneryMatcher,
         stepItems = stepItems, stepBlocks = stepBlocks, acquireWants = acquireWants,
         producedItems = producedItems, neededParsed = neededParsed, isTradeable = isTradeable,
-        recipeFor = recipeFor, setPref = setPref, currentIndex = currentIndex,
+        recipeFor = recipeFor, setPref = setPref, currentIndex = currentIndex, ownClickStep = ownClickStep,
         setBackpack = function(counts) backpack = counts end,
     }
 end

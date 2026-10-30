@@ -107,6 +107,47 @@ local function testWikiFetch(app)
     app.refreshPanel()
 end
 
+-- What the API offers on this client, for the things the plugin would like
+-- to use (IMPROVEMENTS E1-E3): the plugin layer's size, the font's own text
+-- measuring, skill levels, the quest's requirement lists, a text input.
+local function probeAPI(app)
+    local lines = {}
+    local function try(label, fn)
+        local ok, result = pcall(fn)
+        lines[#lines + 1] = label .. ": " .. (ok and View.Escape(tostring(result)) or ("error " .. View.Escape(tostring(result))))
+    end
+    try("plugin layer size", function()
+        local layer = ui.Interfaces:GetComponent(id.Component.TOPLEVEL_V2__PLUGIN_BUILD_LAYER_TOP)
+        return tostring(layer.width) .. "x" .. tostring(layer.height)
+    end)
+    try("font measure (300 wide)", function()
+        local font = config.Font.MUSEO_SANS_15PT_REGULAR
+        local h, n = font:GetStringHeightAndLineCount("The quick brown fox jumps over the lazy dog and keeps on running.", 300)
+        return "height " .. tostring(h) .. ", lines " .. tostring(n) .. ", width of 'Search the crate' "
+            .. tostring(font:GetStringWidth("Search the crate"))
+    end)
+    try("fonts", function()
+        local names = {}
+        for name in pairs(id.Font) do names[#names + 1] = tostring(name) end
+        table.sort(names)
+        return #names .. ": " .. table.concat(names, ", ")
+    end)
+    try("Player.GetLevelCapped(Attack)", function() return Player.GetLevelCapped(0) end)
+    try("quest prerequisites", function()
+        local quest = app.currentQuest()
+        local questType = app.questTypeFor(quest)
+        local skills, quests = 0, 0
+        for _ in pairs(questType.preReqSkills) do skills = skills + 1 end
+        for _ in pairs(questType.preReqQuests) do quests = quests + 1 end
+        return skills .. " skills, " .. quests .. " quests, " .. tostring(questType.preReqQuestPoints) .. " points"
+    end)
+    try("ui.InputField", function() return ui.InputField ~= nil end)
+    try("window size events seen", function() return app.windowSizeEvents end)
+    app.reports.probe = "API probe:<br>" .. table.concat(lines, "<br>")
+    Diag.Note(app.reports.probe)
+    app.refreshPanel()
+end
+
 -- The panel's Debug section for `quest`. `app` gives: reports, varLog,
 -- questInfo, currentQuest, currentEntry, stepCandidates, ownInterfaces,
 -- learnDialogInterface, updateOptionMarks, refreshPanel.
@@ -121,6 +162,7 @@ function DevTools.Rows(app, quest)
     rows[#rows + 1] = { kind = "buttons", buttons = {
         { label = "Scan dialogue", press = function() scanDialogue(app) end },
         { label = "Wiki fetch", press = function() testWikiFetch(app) end },
+        { label = "Probe API", press = function() probeAPI(app) end },
     } }
     for _, name in ipairs({ "dialogue", "probe", "fetch", "chat" }) do
         if app.reports[name] ~= "" then rows[#rows + 1] = { kind = "text", text = app.reports[name], colour = "muted" } end

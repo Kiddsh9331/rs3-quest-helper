@@ -140,6 +140,32 @@ check("the thing to click vs a landmark", roles("Search the crate next to the ch
     and roles("Speak to Ozan and prepare well for battle.", "well") == "0,0"
     and roles("Climb the first staircase to the west.", "stair", true) == "1,0"
     and roles("Talk to Straven near the stairs.", "stair", true) == "0,1")
+-- All quests on paper (2026-10-30): what each step outlines, checked against
+-- what its text acts on.
+check("use ... on: the first 'on' after the verb, wherever the verb is",
+    roles("Head upstairs, and use the key on the door on the south-west side.", "door") == "1,0"
+    and roles("Right-click use the vacuum pump on the perch rock.", "perch rock") == "1,0"
+    and roles("Use the ink bottle on the sharp rock outside on the east-most wall.", "wall") == "0,1"
+    and roles("Use the old rug (you got from the bank earlier) on the barrel.", "barrel") == "1,0"
+    and roles("Knock on the door.", "door") == "1,0" and roles("Stand on the white portal.", "portal") == "1,0"
+    and roles("Choose the push option on the smashed globe-holder.", "smashed globe-holder") == "1,0")
+check("getting past something is doing it", roles("Crawl under the wall to the north.", "wall") == "1,0"
+    and roles("Jump across the pit.", "pit") == "1,0" and roles("Look under the northern potted plant.", "potted plant") == "1,0"
+    and roles("Talk to Bob under the tree.", "tree") == "0,1"
+    and roles("Prepare a ritual by using the pedestal.", "pedestal") == "1,0")
+check("part of a longer name, or 'not', isn't the thing", roles("Return to the throne room downstairs.", "throne") == "0,0"
+    and roles("Use 3 bones on the tomb doors.", "tomb") == "0,0" and roles("Use 3 bones on the tomb doors.", "door") == "1,0"
+    and roles("Exit using the ladder in the south-east (not the portal).", "portal") == "0,1"
+    and roles("Open the small chest against the north wall.", "wall") == "0,1"
+    and roles("Smash the table to the right of the door.", "door") == "0,1")
+-- Watchtower: in the cave, clicking the cave entrance isn't "Go to a gate
+-- south of the 4 cave entrance" three steps on.
+local caves = { { step = { text = "Enter the northeast cave, marked 3." } }, { step = { text = "Kill the ogre." } },
+    { step = { text = "Enter the east cave, marked 5." } }, { step = { text = "Go to a gate south of the 4 cave entrance." } } }
+check("a later step's landmark isn't clicking ahead", (Advance.MatchInteraction(caves, 1, "Enter", "Cave entrance") or 1) == 1)
+local owen = { { step = { text = "Talk to Sir Vyvin, found next to Sir Owen.", npcs = { "Sir Vyvin", "Sir Owen" } } },
+    { step = { text = "Talk to Sir Owen.", npcs = { "Sir Owen" } } } }
+check("...but this step's own landmark still keeps you here", Advance.MatchInteraction(owen, 1, "Talk-to", "Sir Owen") == 1)
 local function gets(text)
     local names = {}
     for _, item in ipairs(Advance.AcquireTargets({ text = text })) do names[#names + 1] = item.name end
@@ -148,6 +174,104 @@ end
 check("what to get: items, not places or phrases", gets("Talk to the dwarf in the Dwarven Mine (he is standing in the hallway).") == ""
     and gets("Pick up the watering can.") == "watering can" and gets("Grab the cheese off of the table.") == "cheese"
     and gets("Get to the top of the tower.") == "" and gets("Buy a beer from the bartender.") == "beer")
+-- GitHub issue #3 (Cold War): stealing the cowbell didn't move the guide on.
+local cowbell = { text = "Go to the west section of the Lumbridge cow field by the gate and steal a cowbell from a "
+    .. "dairy cow by using the steal-cowbell option for later on in the quest." }
+check("stealing something is getting it", Advance.IsAcquireStep(cowbell) and gets(cowbell.text) == "cowbell"
+    and not Advance.TravelFinishes(cowbell))
+-- Elemental Workshop I (session of 2026-10-29): which one of several the
+-- step means, and steps that start with a place or end with something to do.
+local function placement(text, name)
+    local p = Advance.Placement(text, name)
+    if p == nil then return "-" end
+    return (p.dir and (p.dir[1] .. "," .. p.dir[2]) or "") .. (p.anchor and (" of " .. p.anchor) or "")
+        .. (p.extreme and " furthest" or "") .. (p.centre and " centre" or "") .. (p.rank and (" #" .. p.rank) or "")
+end
+check("which one: north of you", placement("Use the weights on the statue just north of you.", "statue") == "0,1")
+-- IMPROVEMENTS A2: adjectives between the direction and the name, the
+-- middle one, the second from a side.
+check("which one: through adjectives, the middle, second from the north",
+    placement("Open the eastern strange wall.", "wall") == "1,0 furthest"
+    and placement("Place Tunks on the north-eastern small tile.", "tile") == "1,1 furthest"
+    and placement("Open the door in the middle of the prison.", "door") == " centre"
+    and placement("Go through the door second from the north on the eastern wall.", "door") == "0,1 furthest #2")
+-- IMPROVEMENTS A6: climbs read more carefully.
+local function dirOf(text) return Advance.ClimbDirection({ text = text }) end
+check("down means a climb down only next to the climb", dirOf("Go down the path to the ladder.") == "any"
+    and dirOf("Climb down the trapdoor.") == "down" and dirOf("Go downstairs and talk to Bob.") == "down"
+    and dirOf("Head down the ladder.") == "down" and dirOf("Climb up the ice.") == "up"
+    and dirOf("Use the ladder in the north room.") == "any")
+check("twice means two climbs", #Advance.ClimbGoals({ text = "Climb up the north-west staircase twice." }) == 2
+    and #Advance.ClimbGoals({ text = "Climb up two sets of stairs." }) == 2)
+check("mines isn't a verb; complete is", Advance.MainAction({ text = "Go down the ladder to enter the Dwarven mines." }) == nil
+    and Advance.MainAction({ text = "Mine 2 blurite ore." }) == "mine"
+    and Advance.MainAction({ text = "Mine the rocks in the cavern." }) == "mine"
+    and not Advance.ClimbFinishes({ text = "Complete 1 lap of the agility course by climbing the rope ladder." }))
+-- IMPROVEMENTS A7: chat written as option numbers.
+check("numeric chat chains read out", Probe.ChatLabel("1 / 1") == "option 1, then option 1"
+    and Probe.ChatLabel("~") == "any option" and Probe.ChatLabel("4 X") == "option 4, then any option"
+    and Probe.ChatLabel("What terrible threat?") == "What terrible threat?"
+    and Probe.ChatNumbers("2 What terrible threat? / Accept") == nil)
+-- IMPROVEMENTS A10 and A8: the step's own teleport, picture references.
+check("the teleport a step names", Advance.NamedTeleport("Teleport to the Meiyerditch Laboratories via Drakan's medallion.") == "drakan's medallion"
+    and Advance.NamedTeleport("Use the Ectophial to teleport to Port Phasmatys.") == "ectophial"
+    and Advance.NamedTeleport("Go to the lake (just north of fairy ring code CKR).") == "fairy ring CKR"
+    and Advance.NamedTeleport("Talk to Bob near the balloon.") == nil
+    and Advance.NamedTeleport("Teleport to Varrock.") == nil)
+check("a step that leans on a picture", Advance.HasPictureRef("Walk to the tile as same as the picture shown below.")
+    and not Advance.HasPictureRef("Search the landscape painting near the bed."))
+-- IMPROVEMENTS A3: the side a travel step gives.
+local function compassIn(text) local d = Advance.CompassIn(text) return d and (d[1] .. "," .. d[2]) or "-" end
+check("the side a step gives", compassIn("Head inside the room to the north.") == "0,1"
+    and compassIn("Run south-east to the farming patches.") == "1,-1" and compassIn("Return to Ug.") == "-")
+-- IMPROVEMENTS A12 and A4: part of a name, and pages written as names.
+check("part of an NPC's name", Advance.MentionsPart("Return to Veldaban.", "Commander Veldaban")
+    and Advance.MentionsPart("Talk to the Duke again.", "Duke Horacio")
+    and not Advance.MentionsPart("Talk to the guard.", "Guard captain")
+    and not Advance.MentionsPart("Talk to Bob.", "Bob"))
+check("a page written as a name", Advance.LooksLikeName("Talk to Point of interest.", "Point of interest")
+    and not Advance.LooksLikeName("Search your backpack.", "backpack"))
+local Card = require("card")
+check("long names on the card header leave room for the counter",
+    #Card.Title(string.rep("Once Upon a Time ", 5), "3 / 22") <= 59
+    and Card.Title(string.rep("Once Upon a Time ", 5), "3 / 22"):find("%.%.%.  3 / 22$") ~= nil
+    and Card.Title("Cook's Assistant", "1 / 5") == "Cook's Assistant  1 / 5")
+check("which one: east/west of something", placement("(Red Indicator) Turn the water controls east of the water "
+    .. "wheel to turn it green.", "water controls") == "1,0 of water wheel"
+    and placement("Search the singular crate north-west of the hatch in the middle room.", "crate") == "-1,1 of hatch")
+check("which one: next to something", placement("Pull the lever by the water wheel.", "lever") == " of water wheel"
+    and placement("Search the crates next to the bed.", "crate") == " of bed")
+check("which one: furthest that way", placement("Search the bookcase on the eastern wall.", "bookcase") == "1,0 furthest"
+    and placement("Climb the northern ladder.", "ladder") == "0,1 furthest"
+    and placement("Open the chest on the east side of the room.", "chest") == "1,0 furthest"
+    and placement("Search the crate in the north-west corner of the room.", "crate") == "-1,1 furthest")
+check("which one: that side of you", placement("Use the stone bowl on the lava trough to the south.", "lava trough") == "0,-1")
+check("which one: rooms, distances, two-word directions",
+    placement("Use the rod on the well in the room west of Drezel.", "well") == "-1,0 of drezel"
+    and placement("Search the crate in the room to the west.", "crate") == "-1,0"
+    and placement("After the cutscene, pass the door into the north room.", "door") == "0,1"
+    and placement("Search the stacked crates two tiles east of the trapdoor.", "crate") == "1,0 of trapdoor"
+    and placement("Safespot them using the rocks south west of the waypost.", "rocks") == "-1,-1 of waypost"
+    and placement("Search the crates in the north-east corner of that room.", "crate") == "1,1 furthest")
+check("which one: the first mention that says", placement("Optional temporal chest: Open and search the temporal "
+    .. "chest in the north-east, requires level 80.", "chest") == "1,1 furthest"
+    and placement("Search the northern most bookcase on the western wall.", "bookcase") == "-2,1 furthest")
+check("which one: not said", placement("Search the crate.", "crate") == "-" and placement("Pull the lever.", "lever") == "-")
+check("a place before the verb is still travel", Advance.TravelFinishes({ text = "In Seers' Village, go to the house "
+    .. "immediately south of the anvil." }) and Advance.IsTravelStep({ text = "With the slashed book, go to the middle room." }))
+check("travel with something to do doesn't finish on arrival", not Advance.TravelFinishes({ text = "Go to the building "
+    .. "with the anvil and click on the northern wall to open the odd-looking wall." })
+    and not Advance.TravelFinishes({ text = "Go to the western room and mine an elemental rock." })
+    and Advance.TravelFinishes({ text = "Go to the open area north of the bank." }))
+check("a name isn't a verb", Advance.TravelFinishes({ text = "Return to Asgarnia Smith with the book." })
+    and Advance.TravelFinishes({ text = "Go to the Fight Arena." })
+    and Advance.MainAction({ text = "After the cutscene, Talk to Bob." }) == "talk")
+check("opening or clicking the way down is part of the climb", Advance.ClimbFinishes({ text = "Open the trapdoor." })
+    and Advance.ClimbFinishes({ text = "Go upstairs (click the metallic stairs on the bottom-left)." })
+    and not Advance.ClimbFinishes({ text = "Go up the ladder and crack open the safe." }))
+check("made on something is the object", roles("With the slashed book, go to the middle room and smith an elemental "
+    .. "shield on an anvil workbench.", "workbench") == "1,0"
+    and roles("Search the bookcase on the eastern wall.", "wall") == "0,1")
 check("either of two items counts", Advance.HaveCount({ ["super antifire potion"] = 1 },
     Advance.ParseNeeded("An anti-dragon shield or super antifire potion")) == 1)
 
@@ -441,6 +565,14 @@ check("Bring: doesn't repeat what the step gets", findButton("Goblin Diplomacy  
             end
         end
     end)())
+-- IMPROVEMENTS A9: a list step ("...from the following crates:") ticks its
+-- sub-bullets one Alt+D at a time; the last one moves the step on.
+check("list step: the first place is next", cardText("^> Behind the generals' hut%.$") ~= nil)
+M.fire("KeyDown", { gameKey = GameKey.D, modifiers = ModifierKey.ALT, isRepeat = false })
+check("Alt+D ticks a place, not the step", gd() == 3 and cardText("^%[done%] Behind the generals' hut%.$") ~= nil
+    and cardText("^> Behind the western hut%.$") ~= nil and anyText("1 of 3 done") ~= nil)
+M.fire("KeyDown", { gameKey = GameKey.D, modifiers = ModifierKey.ALT, isRepeat = false })
+check("second place ticked", gd() == 3 and cardText("^> Up a ladder") ~= nil)
 M.locs = {}
 
 -- Grabbing three goblin mail completes the crates step.
@@ -471,7 +603,10 @@ M.npcs["General Wartface"] = { { config = { gridSize = 1 }, coordGrid = "tile-g"
 M.fire("ServerLogic")
 check("generals highlighted on the use step", M.entities["rs3qb-marker-1"].visible and M.entities["rs3qb-marker-1"].coordGrid == "tile-g")
 
--- The cutscene steps complete as progress rises.
+-- The cutscene steps complete as progress rises (a while after the dyeing:
+-- the var moving right after an item step is that same event).
+local function later() for _ = 1, 5 do M.fire("ServerLogic") end end
+later()
 for value = 14, 16 do
     M.questVar.value = value
     M.fire("VarTransmit")
@@ -520,6 +655,10 @@ local function vs() return M.db.steps.vampyre_slayer end
 local function targets() return M.db["diag.stepTargets"] end
 check("VS recommended items listed", anyText("^RECOMMENDED$") ~= nil and anyText("Holy symbol") ~= nil)
 check("VS required items listed", anyText("Beer or 2 coins to purchase a pint") ~= nil)
+-- IMPROVEMENTS C2: the game's own requirements at the top of the guide.
+check("requirements from the game's quest data", anyText("^REQUIREMENTS$") ~= nil
+    and colourOf(textComponent("^%- 10 Strength %(you: 5%)$")) == "red"
+    and colourOf(textComponent("^%- Goblin Diplomacy$")) == "green" and anyText("^%- 3 quest points$") ~= nil)
 
 M.questVar.value = 20 -- talking to Morgan starts the quest
 M.fire("VarTransmit")
@@ -527,8 +666,23 @@ check("VS step 1 done by progress", vs() == 2)
 
 -- "Go upstairs ... to get a garlic": arriving isn't enough, the garlic is.
 M.player.position = { x = 3096 * 512, y = 0, z = 3270 * 512 }
+M.player.coordGrid.level = 0
 M.fire("ServerLogic")
 check("garlic step waits for the garlic", vs() == 2)
+-- All quests on paper (2026-10-30): a step that climbs outlined only the
+-- stairs, so upstairs nothing at all. Downstairs the stairs up (the drawers
+-- are upstairs); upstairs only the drawers, not the stairs back down.
+M.locs = { M.loc("Staircase", "stairs-1", { "Climb-up" }), M.loc("Drawers", "drawers-1", { "Search" }) }
+M.fire("ServerLogic")
+check("climb step: the stairs up first", M.db["diag.marked"] == "loc Staircase")
+M.player.position = { x = 3096 * 512, y = 0, z = 3271 * 512 }
+M.player.coordGrid.level = 1
+M.locs = { M.loc("Staircase", "stairs-1", { "Climb-down" }), M.loc("Drawers", "drawers-1", { "Search" }) }
+M.fire("ServerLogic")
+M.fire("ServerLogic")
+check("...upstairs, only the drawers", vs() == 2 and M.db["diag.marked"] == "loc Drawers")
+M.locs = {}
+M.player.coordGrid.level = 0
 M.backpack = { { "Garlic", 1, 601 } }
 M.fire("InventoryUpdated")
 check("garlic completes the step", vs() == 3)
@@ -544,6 +698,7 @@ M.backpack = { { "Garlic", 1, 601 }, { "Beer", 1, 602 } }
 M.fire("InventoryUpdated")
 check("beer completes the buy step", vs() == 5)
 
+later()
 M.questVar.value = 21 -- Dr Harlow
 M.fire("VarTransmit")
 check("Harlow step done by progress", vs() == 6)
@@ -572,8 +727,26 @@ M.player.position = { x = 3113 * 512, y = 0, z = 9756 * 512 } -- the basement is
 M.fire("ServerLogic")
 check("going down the stairs completes it", vs() == 10)
 
+-- "Open the coffin": clicking the step's own object finishes it a few ticks
+-- later (IMPROVEMENTS A1), unless the game says nothing happened.
+M.locs = { M.loc("Coffin", "coffin-tile", { "Open" }) }
+M.fire("ServerLogic")
+check("coffin outlined", M.db["diag.marked"] == "loc Coffin")
+M.select("Open", "Coffin", 3)
+M.fire("ChatMessage", { chatMessage = "The coffin is locked.", chatType = 0 })
+for _ = 1, 4 do M.fire("ServerLogic") end
+check("'locked' cancels the click", vs() == 10)
+M.select("Open", "Coffin", 3)
+M.fire("ServerLogic")
+check("the click settles first", vs() == 10)
+for _ = 1, 3 do M.fire("ServerLogic") end
+check("opening the coffin finishes the step", vs() == 11 and anyText("you clicked the coffin") ~= nil)
+M.questVar.value = 25
+M.fire("VarTransmit")
+check("the var moving right after is the same event", vs() == 11)
+M.locs = {}
+
 -- The fight step tells you what to bring, and ends on the kill message.
-findButton("Done, next"):Press()
 check("fight step lists combat kit", anyText("^Bring:$") ~= nil and anyText("^%- Holy symbol.*%(recommended%)$") ~= nil
     and anyText("some food may be required") ~= nil)
 M.fire("ChatMessage", { chatMessage = "You have slain the vampyre.", chatType = 0 })
@@ -600,9 +773,10 @@ M.panelRoot.height = 200 -- a short panel, so the guide overflows
 local body = panelBody()
 for _ = 1, 100 do M.panelRoot.hooks["wheel"](M.panelRoot, -1) end -- start at the top
 M.panelRoot.hooks["wheel"](M.panelRoot, 1)
-check("wheel scrolls the panel content up", body.y == 8 - 40)
+local wheelStep = math.max(40, math.floor((200 - 16) / 4))
+check("wheel scrolls the panel content up", body.y == 8 - wheelStep)
 for _ = 1, 100 do M.panelRoot.hooks["wheel"](M.panelRoot, 1) end
-check("scrolling stops at the end of the content", body.y > -10000 and body.y < 8 - 40)
+check("scrolling stops at the end of the content", body.y > -10000 and body.y < 8 - wheelStep)
 local bottom = body.y
 for _ = 1, 100 do M.panelRoot.hooks["wheel"](M.panelRoot, -1) end
 check("scrolling back stops at the top", body.y == 8 and bottom < 8)
@@ -621,6 +795,54 @@ findButton("Done, next"):Press()
 findButton("Done, next"):Press()
 findButton("Done, next"):Press()
 check("panel scrolls to the current step", panelBody().y < 8)
+-- IMPROVEMENTS C1: opening a quest shows the top (status, items needed),
+-- not the current step; later step changes still scroll to the step.
+findButton("Quest list"):Press()
+pressQuest("Vampyre Slayer")
+check("reopening a quest shows the top, not the current step", vs() == 4 and panelBody().y == 8)
+findButton("Done, next"):Press()
+check("...and the next step change scrolls to it again", vs() == 5 and panelBody().y < 8)
+-- IMPROVEMENTS B5: the list comes back where it was; "Current step" jumps.
+findButton("Quest list"):Press()
+M.panelRoot.hooks["wheel"](M.panelRoot, 1)
+M.panelRoot.hooks["wheel"](M.panelRoot, 1)
+local listY = panelBody().y
+check("list scrolled", listY < 8)
+pressQuest("Vampyre Slayer")
+check("guide opens at the top", panelBody().y == 8)
+findButton("Current step"):Press()
+check("Current step scrolls to the step", panelBody().y < 8)
+findButton("Quest list"):Press()
+check("the list comes back where it was", panelBody().y == listY)
+check("a scroll bar shows how far down the view is", (function()
+    for i = #M.created, 1, -1 do
+        local c = M.created[i]
+        if c.kind == "Rectangle" and live(c) and c.parent == M.panelRoot and c.hidden ~= true and c.w == 4 then return true end
+    end
+end)())
+-- IMPROVEMENTS B7: status filters and letter jumps on the list.
+findButton("> All"):Press()
+findButton("Done"):Press()
+check("Done filter: only finished quests", M.db.prefs.listFilter == "done" and anyText("^Goblin Diplomacy$") ~= nil
+    and anyText("^Vampyre Slayer$") == nil)
+findButton("Started"):Press()
+check("Started filter", anyText("^Vampyre Slayer$") ~= nil and anyText("^Goblin Diplomacy$") == nil)
+findButton("All"):Press()
+findButton("U-Z"):Press()
+check("letter jump scrolls the list", panelBody().y < 8)
+for _ = 1, 100 do M.panelRoot.hooks["wheel"](M.panelRoot, -1) end
+pressQuest("Vampyre Slayer")
+-- IMPROVEMENTS B2: the panel redraws after a resize settles.
+local bodyBefore = panelBody()
+M.panelRoot.width = 300
+M.panelRoot.hooks["resize"](M.panelRoot)
+for _ = 1, 9 do M.fire("ServerLogic") end
+check("not yet redrawn while resizing", panelBody() == bodyBefore)
+for _ = 1, 2 do M.fire("ServerLogic") end
+check("redrawn once the resize settles", panelBody() ~= bodyBefore and not bodyBefore.destroyed == false)
+M.panelRoot.width = 420
+M.panelRoot.hooks["resize"](M.panelRoot)
+for _ = 1, 12 do M.fire("ServerLogic") end
 M.panelRoot.height = 900
 findButton("Mark complete"):Press()
 check("mark complete finishes the guide", vs() == 14 and anyText("All steps done") ~= nil)
@@ -628,6 +850,32 @@ findButton("Hide overview"):Press()
 check("overview can be hidden", anyText("^RECOMMENDED$") == nil and findButton("Show overview") ~= nil)
 findButton("Show overview"):Press()
 check("overview comes back", anyText("^RECOMMENDED$") ~= nil)
+
+-- IMPROVEMENTS B1: the card sizes itself from the screen and stays on it.
+local function cardBox()
+    for i = #M.created, 1, -1 do
+        local c = M.created[i]
+        if c.kind == "GroupBox" and live(c) then return c end
+    end
+end
+check("unknown screen: the default card width", cardBox() ~= nil and cardBox().w == 480)
+M.layer.width, M.layer.height = 2000, 1000
+M.db.cardPosition = { x = 1900, y = 950 }
+M.fire("WindowSizeChanged", { newWidth = 2000, newHeight = 1000 })
+M.fire("ServerLogic")
+local wide = cardBox()
+check("wide screen: the card takes a share of it", wide ~= nil and wide.w == 560)
+check("a saved position off the edge is pulled back on", wide.x <= 2000 - 560 and wide.y <= 1000 - wide.h)
+inSettings("Card size: medium")
+M.fire("ServerLogic")
+check("card size setting changes the share", M.db.prefs.cardSize == "large" and cardBox().w == 640)
+inSettings("Card size: large")
+inSettings("Card size: small")
+M.layer.width, M.layer.height = 100, 20
+M.db.cardPosition = nil
+M.fire("WindowSizeChanged", { newWidth = 100, newHeight = 20 })
+M.fire("ServerLogic")
+check("back to the default on an unknown screen", cardBox().w == 480)
 
 -- ---------- The Knight's Sword, from a recorded play session ----------
 M.fire("Logic")
@@ -741,6 +989,16 @@ check("upstairs: stairs outlined when the target isn't in sight", M.db["diag.mar
 M.locs = { M.loc("Cupboard", "cupboard-1", { "Open" }), M.loc("Door", "door-1", { "Open" }) }
 M.fire("ServerLogic")
 check("the cupboard once it's in sight, and no doors", M.db["diag.marked"] == "loc Cupboard")
+M.select("Search", "Cupboard", 3)
+for _ = 1, 4 do M.fire("ServerLogic") end
+check("searching the cupboard waits for the portrait", ks() == 8)
+-- IMPROVEMENTS B6: the compact card drops the notes.
+check("full card shows the step's notes", cardText("^%- If Sir Vyvin keeps noticing") ~= nil)
+inSettings("Card detail: full")
+check("compact card leaves the notes to the panel", M.db.prefs.cardDetail == "compact"
+    and cardText("^%- If Sir Vyvin keeps noticing") == nil and cardText("^Look for a cupboard") ~= nil)
+inSettings("Card detail: compact")
+check("full card again", cardText("^%- If Sir Vyvin keeps noticing") ~= nil)
 M.backpack = { { "Portrait", 1 } }
 M.fire("InventoryUpdated")
 check("finding the portrait completes the search", ks() == 9 and anyText("got the portrait") ~= nil)
@@ -810,6 +1068,79 @@ for _, c in ipairs(M.created) do
     if c.kind == "Rectangle" and live(c) and c.parent.kind == "GroupBox" and c.colour[1] == 0.5 then fill = c end
 end
 check("card progress strip fills", fill ~= nil and fill.w == math.floor(468 * 13 / 15))
+
+-- ---------- which one of several (Elemental Workshop I, 2026-10-29) ----------
+-- In game three bookcases (one 18 tiles off) and both water controls were
+-- outlined, and the dots led to the lever in the wrong room: the game's
+-- scenery list isn't nearest first. Scenes laid out like the workshop.
+local World = require("world")
+local suppressedBefore = World.pathSuppressed
+local function sceneStep(text, locs, x, z)
+    at(x, z)
+    World.pathSuppressed = false -- the guide's own step may be hinting a teleport
+    M.locs = locs
+    World.SetTargets({}, function(loc)
+        local name = Advance.Clean(loc.displayName)
+        -- "stairs" in a guide can be a "Staircase" (as in the app's matcher).
+        return Advance.MentionRoles(text, name) > 0 or Advance.MentionRoles(text, Advance.Singular(name)) > 0
+            or (name:find("stair") ~= nil and text:find("stair") ~= nil)
+    end, nil, nil, function(name)
+        return Advance.Placement(text, name) or Advance.Placement(text, Advance.Singular(name))
+    end)
+    World.Update()
+    return World.lastMarked
+end
+local function onlyMarked(tile)
+    return M.entities["rs3qb-marker-1"].visible and M.entities["rs3qb-marker-1"].coordGrid == tile
+        and not (M.entities["rs3qb-marker-2"] and M.entities["rs3qb-marker-2"].visible)
+end
+-- IMPROVEMENTS A2: three doors in a row down a prison corridor.
+local prison = { placed("Door", "door-north", { "Open" }, 2100, 3310), placed("Door", "door-middle", { "Open" }, 2100, 3305),
+    placed("Door", "door-south", { "Open" }, 2100, 3300) }
+check("the door in the middle of the prison", sceneStep("Open the door in the middle of the prison.", prison, 2095, 3300)
+    == "loc Door" and onlyMarked("door-middle"))
+check("the door second from the north", sceneStep("Go through the door second from the north.", prison, 2095, 3300)
+    == "loc Door" and onlyMarked("door-middle"))
+check("the northern door", sceneStep("Go through the northern door.", prison, 2095, 3300) == "loc Door"
+    and onlyMarked("door-north"))
+local house = { placed("Bookcase", "bookcase-far", { "Search" }, 2703, 3466),
+    placed("Bookcase", "bookcase-west", { "Search" }, 2711, 3486), placed("Bookcase", "bookcase-north", { "Search" }, 2714, 3488),
+    placed("Bookcase", "bookcase-east", { "Search" }, 2717, 3485) }
+check("bookcase on the eastern wall: just that one",
+    sceneStep("Search the bookcase on the eastern wall to find a battered book.", house, 2714, 3484) == "loc Bookcase"
+    and onlyMarked("bookcase-east"))
+local wheelRoom = { placed("Lever", "lever-bellows", { "Pull" }, 2734, 9888), placed("Lever", "lever-west", { "Pull" }, 2700, 9890),
+    placed("Water wheel", "wheel", {}, 2720, 9906), placed("Water controls", "controls-west", { "Turn" }, 2716, 9905),
+    placed("Water controls", "controls-east", { "Turn" }, 2724, 9905), placed("Lever", "lever-wheel", { "Pull" }, 2721, 9903) }
+check("water controls east of the wheel: just those", sceneStep("(Red Indicator) Turn the water controls east of the "
+    .. "water wheel to turn it green.", wheelRoom, 2716, 9900) == "loc Water controls" and onlyMarked("controls-east"))
+check("water controls west of the wheel: just those", sceneStep("(Red Indicator) Turn the water controls west of the "
+    .. "water wheel to turn it green", wheelRoom, 2726, 9907) == "loc Water controls" and onlyMarked("controls-west"))
+check("lever by the water wheel, not the bellows' lever", sceneStep("Pull the lever by the water wheel.", wheelRoom,
+    2730, 9895) == "loc Lever" and onlyMarked("lever-wheel"))
+local drawnBefore = #M.drawn
+M.fire("Draw")
+local toLever = { shapePositions = {} }
+for i = drawnBefore + 1, #M.drawn do
+    -- The path's dots are 4 corners each; arrows are 6 points.
+    if #M.drawn[i].shapePositions % 4 == 0 then toLever = M.drawn[i] end
+end
+check("dots lead to that lever", #toLever.shapePositions >= 4
+    and math.abs(toLever.shapePositions[#toLever.shapePositions].x / 512 - 2721) <= 2
+    and math.abs(toLever.shapePositions[#toLever.shapePositions].z / 512 - 9903) <= 2)
+local middleRoom = { placed("Crate", "crate-sw", { "Search" }, 2716, 9890), placed("Crate", "crate-ne", { "Search" }, 2724, 9897),
+    placed("Hatch", "hatch", { "Open" }, 2720, 9894), placed("Crate", "crate-nw", { "Search" }, 2717, 9896),
+    placed("Crates", "crates-sw", { "Search" }, 2716, 9891),
+    placed("Boxes", "boxes", { "Search" }, 2723, 9896) }
+check("crate north-west of the hatch: just that one", sceneStep("(Optional) To obtain leather, search the singular "
+    .. "crate north-west of the hatch in the middle room.", middleRoom, 2720, 9890) == "loc Crate" and onlyMarked("crate-nw"))
+check("no placement said: the nearest few", sceneStep("Search the crate.", middleRoom, 2720, 9890)
+    == "loc Crate, loc Crates, loc Crate, loc Crate" and M.entities["rs3qb-marker-1"].coordGrid == "crate-sw")
+check("stairs: only the nearest way down", sceneStep("Go down the stairs.", { placed("Stairs", "stairs-house", { "Climb-down" }, 2715, 3482),
+    placed("Staircase", "stairs-wall", { "Climb-down" }, 2710, 3496) }, 2709, 3494) == "loc Staircase")
+M.locs = {}
+World.SetTargets({}, nil, nil, nil, nil)
+World.pathSuppressed = suppressedBefore
 
 -- ---------- session recorder ----------
 M.fire("ChatMessage", { chatMessage = "hello from another player", chatType = 2 })

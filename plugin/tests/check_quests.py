@@ -13,6 +13,7 @@ import collections
 import json
 import os
 import re
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -27,7 +28,14 @@ parser.add_argument("quests")
 parser.add_argument("--cache", help="wiki answers, shared with build_quests.py --cache")
 parser.add_argument("--out")
 parser.add_argument("--examples", type=int, default=6)
+parser.add_argument("--baseline", help="counts and bug-class findings to compare with (tests/check_baseline.json)")
+parser.add_argument("--write-baseline", action="store_true", help="write --baseline from this run")
 opts = parser.parse_args()
+
+# Findings that mean a bug rather than a review note: a change here fails
+# the comparison.
+BUG_KINDS = ("jump-own", "jump-retalk", "jump-click", "linked-missed", "travel-early", "travel-early-chat",
+             "empty-step", "markup", "chat-odd")
 
 cache = json.load(open(opts.cache, encoding="utf8")) if opts.cache and os.path.exists(opts.cache) else {}
 
@@ -135,3 +143,30 @@ print("   " + "; ".join("%s (%d)" % kv for kv in no_help.most_common(30)))
 if opts.out:
     json.dump({"stats": stats, "findings": findings, "noHelp": no_help.most_common()},
               open(opts.out, "w", encoding="utf8"), indent=1)
+
+# ---------- the baseline: what moved since last time ----------
+if opts.baseline:
+    counts = {kind: len(rows) for kind, rows in by_kind.items()}
+    bugs = sorted({"%s #%s %s: %s" % (f["quest"], f["step"], f["kind"], f["detail"][:80])
+                   for f in findings if f["kind"] in BUG_KINDS})
+    current = {"counts": counts, "bugs": bugs}
+    if opts.write_baseline or not os.path.exists(opts.baseline):
+        json.dump(current, open(opts.baseline, "w", encoding="utf8"), indent=1, sort_keys=True)
+        print("\nBaseline written to %s" % opts.baseline)
+    else:
+        base = json.load(open(opts.baseline, encoding="utf8"))
+        print("\n== compared with %s" % opts.baseline)
+        for kind in sorted(set(base["counts"]) | set(counts)):
+            before, after = base["counts"].get(kind, 0), counts.get(kind, 0)
+            if before != after:
+                print("   %s: %d -> %d" % (kind, before, after))
+        new = sorted(set(bugs) - set(base["bugs"]))
+        gone = sorted(set(base["bugs"]) - set(bugs))
+        for line in gone:
+            print("   fixed: " + line)
+        for line in new:
+            print("   NEW:   " + line)
+        if new:
+            print("BASELINE CHECK FAILED: %d new bug-class findings (rerun with --write-baseline once reviewed)" % len(new))
+            sys.exit(1)
+        print("BASELINE CHECK PASSED")

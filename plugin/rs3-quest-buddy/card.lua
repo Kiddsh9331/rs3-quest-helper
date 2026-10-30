@@ -20,7 +20,10 @@ local View = require("view")
 
 local FONT = id.Font.MUSEO_SANS_15PT_REGULAR
 local CATEGORY = 177              -- our components' category on the shared plugin layer
-local WIDTH = 480
+local DEFAULT_WIDTH = 480         -- when the screen size isn't known
+local MIN_WIDTH, MAX_WIDTH = 360, 640
+local SIZE_SHARES = { small = 0.22, medium = 0.28, large = 0.36 } -- of the screen width
+local WIDTH = DEFAULT_WIDTH       -- the card's current width
 local HEADER_HEIGHT = 26
 local STRIP_HEIGHT = 5            -- progress strip under the title
 local PAD = 10
@@ -34,6 +37,7 @@ local OPTION_COLOUR = Vector4.new(0.35, 0.75, 1.0, 1.0)   -- chosen dialogue opt
 local ITEM_COLOUR = Vector4.new(0.0, 1.0, 1.0, 1.0)       -- backpack item outline
 local DB_POSITION = "cardPosition"
 
+local sizeName = "medium"         -- Card.SetSize
 local box, header = nil, nil
 local strip, stripFill = nil, nil
 local blockTexts = {}             -- Text components for the paragraphs, reused
@@ -60,6 +64,45 @@ local function headerLabel()
     return title .. (moving and "   (click to drop)" or "")
 end
 
+-- The plugin layer's size, when the game reports one (nil before the first
+-- draw, and in the offline tests).
+local function layerSize()
+    local layer = pluginLayer()
+    local ok, w, h = pcall(function() return layer.width, layer.height end)
+    if ok and type(w) == "number" and type(h) == "number" and w > 600 and h > 300 then return w, h end
+    return nil
+end
+
+-- Width as a share of the screen, within limits; the default on an
+-- unknown screen.
+local function fitWidth()
+    local w = layerSize()
+    if w == nil then return DEFAULT_WIDTH end
+    return math.floor(math.max(MIN_WIDTH, math.min(MAX_WIDTH, w * (SIZE_SHARES[sizeName] or SIZE_SHARES.medium))))
+end
+
+-- Keep a saved position on screen: a card dropped at the right edge of a
+-- wide screen would otherwise sit off a narrower one.
+local function clampPosition(height)
+    local w, h = layerSize()
+    if position == nil or w == nil then return end
+    position = { x = math.max(0, math.min(position.x, w - WIDTH)), y = math.max(0, math.min(position.y, h - height)) }
+end
+
+-- "small", "medium" or "large" (Settings); the card is rebuilt on the next show.
+function Card.SetSize(name)
+    if SIZE_SHARES[name] == nil or name == sizeName then return end
+    sizeName = name
+    Card.Hide()
+end
+
+-- The window changed size: refit on the next show.
+function Card.OnWindowResized()
+    Card.Hide()
+end
+
+function Card.Width() return WIDTH end
+
 local function toggleMove()
     if box == nil then return end
     if not moving then
@@ -80,6 +123,8 @@ local function build(height)
     if layer == nil then return false end -- not in game yet; the caller retries
     cardBase = (cardBase == 100) and 200 or 100
     blockTexts = {}
+    WIDTH = fitWidth()
+    clampPosition(height)
     box = ui.GroupBox.new(layer, CATEGORY, cardBase)
     box.stylesheetID = id.StyleSheet.DEFAULT
     box:SetHeaderLayout(0, 0, 0, 0, 0)
@@ -130,7 +175,7 @@ local function layout(blocks)
         local b = blocks[i]
         local x = PAD + (b.indent or 0) * INDENT
         local width = WIDTH - x - PAD
-        local height = View.TextHeight(b.text, View.CharsFor(width - CARD_TEXT_INSET))
+        local height = View.TextHeight(b.text, View.CharsFor(width - CARD_TEXT_INSET), width - CARD_TEXT_INSET)
         local t = blockText(i)
         t:SetPos(x, y)
         t:SetSize(width, height)
@@ -150,13 +195,22 @@ function Card.HeightFor(blocks)
     local y = HEADER_HEIGHT + STRIP_HEIGHT + 8
     for i = 1, math.min(#blocks, MAX_BLOCKS) do
         local width = WIDTH - PAD - (blocks[i].indent or 0) * INDENT - PAD
-        y = y + View.TextHeight(blocks[i].text, View.CharsFor(width - CARD_TEXT_INSET)) + (blocks[i].gap or 2)
+        y = y + View.TextHeight(blocks[i].text, View.CharsFor(width - CARD_TEXT_INSET), width - CARD_TEXT_INSET) + (blocks[i].gap or 2)
     end
     return y + 6
 end
 
+-- The header text: `name` shortened so `suffix` (the step counter) always
+-- fits ("Once Upon a Time in Gielinor: Foreshadowing" ran off the end).
+function Card.Title(name, suffix)
+    local room = View.CharsFor(WIDTH - 2 * PAD - 40) - #suffix - 2
+    if #name > room then name = name:sub(1, math.max(1, room - 3)):gsub("%s+$", "") .. "..." end
+    return name .. "  " .. suffix
+end
+
 -- Show or update the card: title, `blocks` of text, and progress (0..1).
 function Card.Show(newTitle, blocks, progress)
+    if box == nil then WIDTH = fitWidth() end
     local height = Card.HeightFor(blocks)
     if box == nil and not build(height) then return end
     title = newTitle

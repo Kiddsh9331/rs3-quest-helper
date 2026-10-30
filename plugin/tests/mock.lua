@@ -60,7 +60,7 @@ end
 ui = {
     ComponentType = { LABEL = "label", BUTTON = "button", CHECK = "check", SPRITE = "sprite" },
     AlignMode = { TOPLEFT = 0, CENTRE = 1, BOTTOMRIGHT = 2 },
-    Hook = { ONBUTTONPRESSED = "press", ONCLICK = "click", ONSCROLLWHEEL = "wheel" },
+    Hook = { ONBUTTONPRESSED = "press", ONCLICK = "click", ONSCROLLWHEEL = "wheel", ONRESIZE = "resize" },
     Interfaces = {},
 }
 for _, kind in ipairs({ "Text", "Button", "Panel", "GroupBox", "Rectangle", "Layer", "Check", "Line" }) do
@@ -111,7 +111,13 @@ config = {
         end
         local q = { id = i, configName = "Q" .. i, name = name, deprecated = false, canStartQuest = true,
             hasFinishedQuest = (i == 1), hasStartedQuest = false,
-            masterQuestVars = { { varPlayer = M.questVar, startState = 1, endState = 7 } } }
+            masterQuestVars = { { varPlayer = M.questVar, startState = 1, endState = 7 } },
+            preReqSkills = {}, preReqQuests = {}, preReqQuestPoints = 0 }
+        if i == 9 then
+            q.preReqSkills = { { skillType = 2, minimumLevel = 10 } }
+            q.preReqQuests = { { name = "Goblin Diplomacy", hasFinishedQuest = true } }
+            q.preReqQuestPoints = 3
+        end
         if i == 5 then
             setmetatable(q, { __index = function(_, k)
                 if k == "hasStartedQuest" then return M.knightsSword.started end
@@ -135,7 +141,8 @@ Inventory = { Find = function(invID)
     end }
 end }
 M.player = { position = { x = 3001 * 512, y = 0, z = 3100 * 512 }, coordGrid = { level = 0 } }
-Player = { GetEntity = function() return M.player end }
+M.levels = { [2] = 5 } -- Strength 5
+Player = { GetEntity = function() return M.player end, GetLevelCapped = function(skill) return M.levels[skill] or 1 end }
 M.mouse = { x = 500, y = 300 }
 Mouse = { GetPosition = function() return { x = M.mouse.x, y = M.mouse.y } end }
 ScreenConvert = { Vector3ToScreen = function(v) return { x = 400, y = 300 } end }

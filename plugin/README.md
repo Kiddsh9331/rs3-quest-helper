@@ -15,20 +15,36 @@ quest" below).
 ## What it does
 
 - **Panel** (Plugins ribbon icon): every quest with live status read from the
-  game, no RuneMetrics needed. Pick one for the step view with Back / Done,
-  the quest's items (green when in your backpack, red when missing), and
-  (test build only) a Debug section with the test tools. **Settings**
-  switches the card, auto-advance, the path, tile marker, teleport hints
-  and recording on or off. Under a missing item: the guide's own
-  note when it has one ("Bars can be withdrawn at the anvil"), otherwise
-  "(Grand Exchange)" when it's tradeable, or with **Ironman: on** how to
-  make it, followed down through its ingredients.
-- **Step card** on the game screen: the step, its chat options, its notes
-  indented underneath, then what to **Bring** and what to **Get** for this
-  step, each checked against your backpack. A strip under the title fills
+  game, no RuneMetrics needed, with All / Started / Not started / Done
+  filters and A-D ... U-Z jumps. Pick one and the guide opens at the top:
+  status, the game's own **Requirements** (skills with your level, quests,
+  quest points, green or red), the quest's items (green when in your
+  backpack, red when missing; kit advice like "combat gear and food" in
+  grey), then every step with Back / Done. The panel scrolls to a step
+  when it changes; **Current step** jumps there; the list comes back where
+  you left it; a thin bar on the right shows how far down you are. (Test
+  build only) a Debug section with the test tools, including **Probe API**.
+  **Settings** switches the card, auto-advance, the path, tile marker,
+  teleport hints and recording on or off, and sets the card's detail
+  (full / compact) and size (small / medium / large, a share of the screen
+  width). Under a missing item: the guide's own note when it has one
+  ("Bars can be withdrawn at the anvil"), otherwise "(Grand Exchange)" when
+  it's tradeable, or with **Ironman: on** how to make it, followed down
+  through its ingredients.
+- **Step card** on the game screen: the step, its chat options ("1 / 1"
+  chains read as "option 1, then option 1"), its notes indented underneath,
+  then what to **Bring** and what to **Get** for this step, each checked
+  against your backpack. Very long steps are cut with "(more in the
+  panel)"; steps that lean on a wiki picture say so; a list step
+  ("Locations:") ticks one sub-bullet per Alt+D. The card sizes itself from
+  the screen and stays on it when the window changes; compact mode keeps
+  the instruction, chat and missing items. A strip under the title fills
   as you go. Click the title bar to pick it up, click again to drop it.
 - **Auto-advance** (Auto: on): interacting with something the current or a
-  near-upcoming step names jumps to that step; the quest's progress var
+  near-upcoming step names jumps to that step; clicking the step's own
+  object ("Search the crate", "Pull the lever") finishes it a few ticks
+  later unless the game says nothing happened ("You find nothing", "The
+  door is locked"); the quest's progress var
   moving finishes the step you were on; picking up an "Obtain/Mine..." item
   ticks that step (also a step or two early); handing a step's items over
   ticks it; getting an item the next step uses ticks the current one;
@@ -38,19 +54,31 @@ quest" below).
   clicking someone you just spoke to doesn't skip ahead to the next time the
   guide names them.
 - **World highlights**: NPCs and scenery the step names (trapdoor, blurite
-  rocks) get a cyan tile outline and a bobbing arrow above them, at most
-  three of each name (stairs and ladders: just the nearest, where the dots
-  lead). "Climb the ladder to the east, then the staircase to the west"
-  takes both climbs, each highlighted on its side. On the wrong floor for
+  rocks) get a cyan tile outline and a bobbing arrow above them, the
+  nearest three of each name (stairs and ladders: just the nearest one,
+  where the dots lead). When the step says which one, only that one is
+  outlined: "the lever by the water wheel", "the water controls east of the
+  water wheel", "the bookcase on the eastern wall", "the trough to the
+  south". "Climb the ladder to the east, then the staircase to the west"
+  takes both climbs, each highlighted on its side; "Go upstairs and search
+  the drawers" outlines the drawers once you're up, not the stairs back
+  down. "Enter the cave" outlines the cave entrance, and the doors and gates
+  there only when nothing it names is in sight. On the wrong floor for
   the target (Sir Vyvin is two up), the stairs that way are outlined
   instead; in a dungeon with the target up top, the dots lead back to where
   you came down. Ladders, doors and the like only count for the step you're
   on, so the Lumbridge mill's ladder doesn't skip ahead. Things a step only
-  uses as a landmark ("Talk to Adam, north of the well") aren't outlined.
+  uses as a landmark ("Talk to Adam, north of the well", "the building
+  with the anvil", "the throne room", "the ladder behind the altar", "(not
+  the portal)") aren't outlined, and clicking one doesn't skip ahead to a
+  later step that mentions it that way.
   The step's `{{Map}}` tile gets a beacon until you're within 6 tiles.
 - **Dotted path** towards the next place, one dot per tile, walking around
   walls and solid objects (doors count as open). Water and cliffs that are
   part of the ground aren't objects, so the path can't see them.
+- **Rough spots**: "Head inside the room to the north" with no map spot
+  gets dots to a spot that way from the last place (no marker, a wider
+  "arrived"); "Go to the cave" borrows the next step's spot.
 - **Teleport hint**: when the next place is far away and a lodestone lands
   much closer, the card and a line under your character say which one, and
   the dots wait until you're there.
@@ -103,7 +131,15 @@ msedge --headless --disable-gpu --dump-dom --virtual-time-budget=60000 ^
   (copy the JSON out of <pre id="out"> into guides_all.json)
 python plugin/tools/build_quests.py guides_all.json --all --cache wiki.json
 python plugin/tests/check_quests.py plugin/rs3-quest-buddy/quests.lua --out findings.json
+python plugin/tests/run.py --full wiki.json        (the tests, then the checker against tests/check_baseline.json)
 ```
+
+`check_quests.py --baseline tests/check_baseline.json` compares this run with
+the committed counts and lists new bug-class findings (clicks that jump
+ahead, linked objects not outlined, travel steps finishing early); after
+reviewing a change that moves them, rewrite the file with `--write-baseline`.
+Hand-written notes for steps whose solution the wiki only shows as a
+picture go in `tools/step_overrides.json` and are merged as sub-bullets.
 
 (`dump_guides.html?src=` needs the JSON served from the same origin, so put
 `wikitext_all.json` in the repo root while dumping, and keep it out of git.)

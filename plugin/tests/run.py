@@ -12,6 +12,10 @@ import sys
 
 from lupa import lua54
 
+# Quest text has characters the Windows console can't show.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(errors='replace')
+
 here = os.path.dirname(os.path.abspath(__file__)).replace('\\', '/')
 plugin_dir = os.path.join(here, '..', 'rs3-quest-buddy').replace('\\', '/')
 
@@ -60,6 +64,25 @@ for guidance in (True, False):
     if not ok:
         lines.insert(-1, '  ' + '; '.join(l for l in release.splitlines() if l.startswith('FAIL')))
         lines[-1] = 'RELEASE FAILED' if lines[-1] == 'ALL PLUGIN TESTS PASSED' else lines[-1]
+# --full [wiki cache]: every quest through check_quests.py against the
+# committed baseline (tests/check_baseline.json); new bug-class findings fail.
+if '--full' in sys.argv:
+    import subprocess
+    args = [sys.executable, os.path.join(here, 'check_quests.py'), os.path.join(plugin_dir, 'quests.lua'),
+            '--baseline', os.path.join(here, 'check_baseline.json')]
+    extra = [a for a in sys.argv[1:] if a != '--full']
+    if extra:
+        args += ['--cache', extra[0]]
+    full = subprocess.run(args, capture_output=True, text=True, encoding='utf8', errors='replace')
+    out = full.stdout.splitlines()
+    start = next((i for i, l in enumerate(out) if l.startswith('== compared with')), len(out))
+    tail = [l for l in out[start + 1:] if l.startswith('   ') or l.startswith('BASELINE')]
+    ok = 'BASELINE CHECK PASSED' in full.stdout
+    lines.insert(-1, ('PASS' if ok else 'FAIL') + ' all quests on paper match the baseline (check_quests.py)')
+    for l in tail:
+        lines.insert(-1, '  ' + l.strip())
+    if not ok:
+        lines[-1] = 'BASELINE FAILED' if lines[-1] == 'ALL PLUGIN TESTS PASSED' else lines[-1]
 report = '\n'.join(lines)
 print(report)
 sys.exit(0 if report.endswith('ALL PLUGIN TESTS PASSED') else 1)

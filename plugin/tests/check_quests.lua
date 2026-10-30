@@ -9,15 +9,15 @@
 -- build_quests.py --all). Returns { findings = {...}, stats = {...} }.
 
 package.loaded.quests = dofile(QUESTS_FILE)
-RS3QH_REPLAY = {}
+RS3QB_REPLAY = {}
 assert(loadfile(PLUGIN_DIR .. "/main.lua"))()
-assert(RS3QH_REPLAY.inside, "plugin didn't load: " .. tostring(M.db["diag.loadError"]))
+assert(RS3QB_REPLAY.inside, "plugin didn't load: " .. tostring(M.db["diag.loadError"]))
 
 local Advance = require("advance")
 local Probe = require("probe")
 local Travel = require("travel")
 local Quests = require("quests")
-local P = RS3QH_REPLAY.inside
+local P = RS3QB_REPLAY.inside
 local pages = Quests.pages or {}
 
 local findings, stats = {}, { quests = 0, steps = 0 }
@@ -62,6 +62,12 @@ local SCENERY = {
     { "Bed", "Search" }, { "Sign", "Read" }, { "Stall", "Steal-from" }, { "Rowboat", "Board" }, { "Rope", "Climb" },
 }
 
+-- Words after an object's name that say which one ("the crate north of
+-- the bed"), for spotting placements Advance.Placement doesn't understand.
+local PLACE_HINTS = { " north", " south", " east", " west", " next to ", " by the ", " near ", " beside ",
+    " corner", " wall ", " side ", " left ", " right ", " closest ", " nearest ", " middle ", " centre ",
+    " center ", " opposite ", " behind ", " in front " }
+
 local function sceneryLoc(name, op, x, z)
     return { displayName = name, config = { opNames = { op } }, position = { x = x * 512 + 256, y = 0, z = z * 512 + 256 } }
 end
@@ -84,14 +90,14 @@ end
 P.setPref("ironman", false)
 for _, quest in ipairs(Quests) do
     stats.quests = stats.quests + 1
-    RS3QH_REPLAY.openQuest(quest.key)
+    RS3QB_REPLAY.openQuest(quest.key)
     local list = P.flatSteps[quest.key]
     list.quest = quest
     local previousNav = nil
     local manualOnly = 0
     for index, entry in ipairs(list) do
         stats.steps = stats.steps + 1
-        RS3QH_REPLAY.setStep(index, "check")
+        RS3QB_REPLAY.setStep(index, "check")
         local step = entry.step
         local full = Advance.FullText(step)
         local targets = P.stepTargets(quest, index)
@@ -128,7 +134,7 @@ for _, quest in ipairs(Quests) do
         local climb = Advance.ClimbDirection(step)
         if climb ~= nil then
             count("climbSteps")
-            local action = otherAction(step.text)
+            local action = Advance.MainAction(step)
             if Advance.ClimbFinishes(step) and #P.acquireWants(quest, entry) == 0 then
                 count("climbFinishes")
                 if not CLIMB_FIRST[first] or action then
@@ -146,7 +152,9 @@ for _, quest in ipairs(Quests) do
         if Advance.IsTravelStep(step) then
             count("travelSteps")
             local action = otherAction(step.text)
-            if Advance.TravelFinishes(step) and action and #P.acquireWants(quest, entry) == 0 then
+            -- Named something to do that the plugin didn't read as an action.
+            if Advance.TravelFinishes(step) and action and Advance.MainAction(step) == nil
+                and #P.acquireWants(quest, entry) == 0 then
                 note(quest, index, step.chat and "travel-early-chat" or "travel-early", action, step.text)
             elseif not Advance.TravelFinishes(step) then
                 note(quest, index, "travel-waits", Advance.MainAction(step) or "", step.text)
@@ -193,7 +201,7 @@ for _, quest in ipairs(Quests) do
         for _, need in ipairs(wants) do note(quest, index, "get", need.name, step.text) end
 
         -- ---------- what gets outlined ----------
-        local matcher = P.sceneryMatcher(entry)
+        local matcher, place = P.sceneryMatcher(entry)
         if matcher ~= nil then
             local outlined = {}
             for _, s in ipairs(SCENERY) do
@@ -205,6 +213,52 @@ for _, quest in ipairs(Quests) do
                 if ok and hit then outlined[#outlined + 1] = s[1] end
             end
             if #outlined > 0 then note(quest, index, "outlines", table.concat(outlined, "|"), step.text) end
+            -- Scenery the step links ("Drawers (garlic)") but doesn't outline,
+            -- unless the text only says it's where something else is.
+            local nav = targets.nav or { x = 3200, y = 3200, plane = 0 }
+            for _, page in ipairs(step.npcs or {}) do
+                local name = Advance.BaseName(page)
+                local object, landmark = Advance.MentionRoles(step.text, name)
+                if (pages[page:lower()] or {}).kind == "scenery" and (object > 0 or landmark == 0) then
+                    -- Ladders and the like on any side ("the trapdoor to the west"),
+                    -- with the menu the step's climb wants.
+                    local op = Advance.ClimbDirection(step) == "down" and "Climb-down"
+                        or (Advance.IsGenericScenery(name) and "Climb-up" or "Search")
+                    local found = false
+                    for _, d in ipairs({ { 2, 0 }, { -2, 0 }, { 0, 2 }, { 0, -2 } }) do
+                        local ok, hit = pcall(matcher, sceneryLoc(name:sub(1, 1):upper() .. name:sub(2), op, nav.x + d[1], nav.y + d[2]))
+                        found = found or (ok and hit)
+                    end
+                    if not found then note(quest, index, "linked-missed", page, step.text) end
+                end
+            end
+            -- Clicking what's outlined moves the guide past this step.
+            for _, name in ipairs(outlined) do
+                local to = jumpFor(list, index, "Search", name)
+                if to then note(quest, index, "jump-click", name .. " -> step " .. to, step.text) end
+            end
+            -- Which one of several: said and understood ("placed"), or the
+            -- text near the name gives a direction or landmark that wasn't
+            -- understood ("unplaced"), so all nearby ones get outlined.
+            for _, name in ipairs(outlined) do
+                local p = place and place(name:lower())
+                if p then
+                    count("placed")
+                    note(quest, index, "placed", name .. ": " .. (p.dir and (p.dir[1] .. "," .. p.dir[2]) or "")
+                        .. (p.anchor and (" of " .. p.anchor) or "") .. (p.extreme and " furthest" or ""), step.text)
+                elseif not Advance.IsGenericScenery(name) or name == "Door" or name == "Gate" then
+                    local text = " " .. step.text:lower():gsub("[^%w]", " ") .. " "
+                    local at = text:find(" " .. name:lower(), 1, true)
+                    local near = at and text:sub(at, at + 60) or ""
+                    for _, hint in ipairs(PLACE_HINTS) do
+                        -- "Open the eastern strange wall": "wall" is the wall itself.
+                        if near:find(hint, 1, true) and not (name == "Wall" and hint == " wall ") then
+                            note(quest, index, "unplaced", name .. ": " .. hint:gsub("^%s+", ""):gsub("%s+$", ""), step.text)
+                            break
+                        end
+                    end
+                end
+            end
         end
 
         -- ---------- how it finishes by itself ----------
@@ -223,6 +277,9 @@ for _, quest in ipairs(Quests) do
         if Advance.IsMakeStep(step) and #P.producedItems(quest, index) > 0 then how[#how + 1] = "make" end
         if Advance.IsEnterStep(step) then how[#how + 1] = "door" end
         if Advance.IsUntilStep(step) then how[#how + 1] = "found" end
+        -- Clicking the step's own object ("Search the crate"), the kill message.
+        if P.ownClickStep(quest, entry) then how[#how + 1] = "click" end
+        if Advance.IsFightStep(step) then how[#how + 1] = "kill" end
         if #how == 0 then
             -- Only the quest's progress var (if it moves) or "Done, next".
             manualOnly = manualOnly + 1

@@ -75,8 +75,35 @@ function View.LineCount(content, charsPerLine)
     return lines
 end
 
-function View.TextHeight(content, charsPerLine)
-    return View.LineCount(content, charsPerLine) * LINE_HEIGHT + 4
+-- Lines as the game itself would wrap them, when the API offers the font's
+-- measuring call (config.Font:GetStringHeightAndLineCount); nil otherwise,
+-- or when the answer looks wrong, and the estimate above is used.
+local measureState = nil -- "api" or "estimate", noted once in diagnostics
+local function measuredLines(content, width)
+    if width == nil or width <= 0 then return nil end
+    local ok, lines = pcall(function()
+        local font = config.Font.MUSEO_SANS_15PT_REGULAR
+        local _, count = font:GetStringHeightAndLineCount(content, width)
+        return count
+    end)
+    if not ok or type(lines) ~= "number" or lines < 1 or lines > 60 then
+        if measureState == nil then
+            measureState = "estimate"
+            Diag.Snapshot("textMeasure", measureState)
+        end
+        return nil
+    end
+    if measureState ~= "api" then
+        measureState = "api"
+        Diag.Snapshot("textMeasure", measureState)
+    end
+    return math.floor(lines)
+end
+
+-- `width` (interface units) lets the game measure the text itself.
+function View.TextHeight(content, charsPerLine, width)
+    local lines = measuredLines(content, width) or View.LineCount(content, charsPerLine)
+    return lines * LINE_HEIGHT + 4
 end
 
 -- ---------- ids ----------
@@ -155,7 +182,7 @@ end
 local render = {}
 
 function render.title(body, r, chars)
-    local height = View.TextHeight(r.text, chars)
+    local height = View.TextHeight(r.text, chars, contentWidth)
     text(body, r.text, View.colour.gold, nil, nil, nil, height)
     return height
 end
@@ -167,7 +194,7 @@ function render.heading(body, r)
 end
 
 function render.text(body, r, chars)
-    local height = View.TextHeight(r.text, chars)
+    local height = View.TextHeight(r.text, chars, contentWidth)
     text(body, r.text, r.colour and View.colour[r.colour], nil, nil, nil, height)
     return height
 end
@@ -222,7 +249,8 @@ local function stepBlockHeights(r, chars)
     local heights, total = {}, 0
     for i, b in ipairs(r.blocks) do
         -- Matches render.step: text from x = 34 + indent, 8 units short of the edge.
-        heights[i] = View.TextHeight(b.text, View.CharsFor(contentWidth - 42 - (b.indent or 0) * STEP_INDENT))
+        local width = contentWidth - 42 - (b.indent or 0) * STEP_INDENT
+        heights[i] = View.TextHeight(b.text, View.CharsFor(width), width)
         total = total + heights[i] + 2
     end
     return heights, total
@@ -261,7 +289,8 @@ end
 function render.blocks(body, r, chars)
     local heights, total = {}, 0
     for i, b in ipairs(r.blocks) do
-        heights[i] = View.TextHeight(b.text, View.CharsFor(contentWidth - (b.indent or 0) * STEP_INDENT))
+        local width = contentWidth - (b.indent or 0) * STEP_INDENT
+        heights[i] = View.TextHeight(b.text, View.CharsFor(width), width)
         total = total + heights[i] + 2
     end
     local layer = row(body, total)
@@ -302,17 +331,38 @@ end
 -- moving the content up: the wheel shifts it by `offset`, kept between 0
 -- and how far the content overflows. The offset survives redraws.
 local SCROLL_STEP = 40
-local scroll = { offset = 0, content = 0, view = 0, body = nil }
+local BAR_WIDTH = 4
+local scroll = { offset = 0, content = 0, view = 0, body = nil, bar = nil, anchorY = nil, rowTops = {} }
+
+-- A thin bar on the right showing where in the content the view is.
+local function placeBar()
+    local bar = scroll.bar
+    if bar == nil then return end
+    pcall(function()
+        if scroll.content <= scroll.view or scroll.view <= 0 then
+            bar.hidden = true
+            return
+        end
+        local track = scroll.view
+        local height = math.max(20, math.floor(track * scroll.view / scroll.content))
+        local y = math.floor(scroll.offset / (scroll.content - scroll.view) * (track - height))
+        bar:SetPos(contentWidth + 10, 8 + y)
+        bar:SetSize(BAR_WIDTH, height)
+        bar.hidden = false
+    end)
+end
 
 local function applyScroll()
     scroll.offset = math.max(0, math.min(scroll.offset, scroll.content - scroll.view))
     if scroll.body ~= nil then pcall(function() scroll.body:SetPos(8, 8 - scroll.offset) end) end
+    placeBar()
 end
 
--- Wheel down moves the content up.
+-- Wheel down moves the content up, a quarter of the view at a time.
 onWheel = function(_, delta)
     if type(delta) ~= "number" then return end
-    scroll.offset = scroll.offset + (delta > 0 and SCROLL_STEP or -SCROLL_STEP)
+    local step = math.max(SCROLL_STEP, math.floor(scroll.view / 4))
+    scroll.offset = scroll.offset + (delta > 0 and step or -step)
     applyScroll()
 end
 
@@ -322,11 +372,32 @@ function View.ScrollToTop()
     applyScroll()
 end
 
+-- Where the view is, and back to a remembered place (the quest list after
+-- a look at a guide).
+function View.ScrollOffset() return scroll.offset end
+function View.ScrollTo(offset)
+    scroll.offset = offset or 0
+    applyScroll()
+end
+
+-- To the row marked `anchor` (the current step) in the last render.
+function View.ScrollToAnchor()
+    if scroll.anchorY ~= nil then View.ScrollTo(scroll.anchorY - 60) end
+end
+
+-- To row `index` of the last render (the quest list's letter jumps).
+function View.ScrollToRow(index)
+    local top = scroll.rowTops[index]
+    if top ~= nil then View.ScrollTo(top - 8) end
+end
+
 -- Draw `rows` into `root`, replacing `previous` (the last body returned).
 -- With `focus`, scrolls so the row marked `anchor = true` (the current
 -- step) is near the top, like the Alt1 app's list. Returns the new body.
 function View.Render(root, rows, previous, focus)
     if previous ~= nil then pcall(function() previous:Destroy() end) end
+    if scroll.bar ~= nil then pcall(function() scroll.bar:Destroy() end) end
+    scroll.bar = nil
     rangeStart, nextID = (rangeStart == 1) and (ID_RANGE + 1) or 1, 0
 
     local width, height = 0, 0
@@ -339,17 +410,25 @@ function View.Render(root, rows, previous, focus)
     body.isVertical = true
     body.spacing = 4
     local total, anchorY = 0, nil
+    scroll.rowTops = {}
     for i, r in ipairs(rows) do
         if i > 1 then total = total + body.spacing end
         if r.anchor then anchorY = total end
+        scroll.rowTops[i] = total
         local ok, rowHeight = Diag.Guard("render " .. r.kind, render[r.kind], body, r, chars)
         if not ok then break end
         total = total + (rowHeight or 0)
     end
     -- The body is as tall as its content so nothing is squeezed; the root clips it.
     body:SetSize(-16, total, 1.0, 0.0)
-    scroll.body, scroll.content, scroll.view = body, total, height - 16
+    scroll.body, scroll.content, scroll.view, scroll.anchorY = body, total, height - 16, anchorY
     if focus and anchorY ~= nil then scroll.offset = anchorY - 60 end
+    if total > scroll.view and scroll.view > 0 then
+        local bar = make(ui.Rectangle, root)
+        bar.colour = vec(View.colour.border)
+        bar.fill = true
+        scroll.bar = bar
+    end
     applyScroll()
     for _, target in ipairs({ root, body }) do
         pcall(function() target:Subscribe(ui.Hook.ONSCROLLWHEEL, "rs3qb-scroll", onWheel) end)

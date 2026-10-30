@@ -20,7 +20,7 @@ local World = {}
 local TILE = 512                  -- fine units per tile
 local MAX_MARKERS = 8             -- NPC + scenery markers at once
 local MAX_SAME_NAME = 3           -- markers per scenery name ("Door"), nearest first
-local MAX_SAME_CLIMB = 1          -- stairs and ladders: just the nearest, the one the dots lead to
+local MAX_SAME_CLIMB = 1          -- stairs and ladders (all names together): just the nearest, where the dots lead
 local FLOOR_NEAR = 40             -- tiles; this close to a target on another floor, show the stairs
 local CROSSING_NEAR = 100         -- tiles; a dungeon entrance further than this is from another trip
 local LOC_SEARCH_RANGE = 24       -- tiles around the player searched for scenery
@@ -37,7 +37,8 @@ local BEACON_HEIGHT = 1800
 
 local npcNames = {}               -- display names to highlight
 local sceneryMatch = nil          -- function(loc) -> true to outline that object, or nil
-local fallbackMatch = nil         -- used upstairs when nothing else is in sight (stairs and ladders)
+local fallbackMatch = nil         -- used when nothing else is in sight (stairs upstairs, doors to enter)
+local placeFor = nil              -- function(name) -> which one of several the step means (Advance.Placement)
 local navTile = nil               -- { x, y, plane } destination, or nil
 local markers, markerShapes = {}, {}
 local beacon, beaconKey = nil, nil
@@ -123,10 +124,12 @@ end
 
 -- What to highlight: `names` (NPC display names), `match` (function(loc)
 -- picking scenery to outline, or nil), `nav` ({ x, y, plane } or nil), and
--- `fallback` (a matcher used when the player is upstairs and neither the
--- NPCs nor the scenery are in sight: the stairs are likely the way).
-function World.SetTargets(names, match, nav, fallback)
-    npcNames, sceneryMatch, navTile, fallbackMatch = names or {}, match, nav, fallback
+-- `fallback` (a matcher used when neither the NPCs nor the scenery are in
+-- sight: the stairs upstairs, the doors for "Enter the manor"). `place`
+-- (function(name) -> placement or nil) narrows several of one name to the
+-- one the step means.
+function World.SetTargets(names, match, nav, fallback, place)
+    npcNames, sceneryMatch, navTile, fallbackMatch, placeFor = names or {}, match, nav, fallback, place
     trackedNPCs = {}
 end
 
@@ -375,25 +378,168 @@ local function noteCrossing(player)
     wasUnderground = under
 end
 
--- Outline scenery picked by `match`, from marker `slot` on; returns the new slot.
-local function markScenery(player, match, slot, marked)
-    local perName = {}
-    for _, loc in pairs(LocList.ByDistance(player.coordGrid, LOC_SEARCH_RANGE, true)) do
-        if slot >= MAX_MARKERS then break end
-        local ok, wanted = pcall(match, loc)
-        local name = tostring(loc.displayName)
-        local limit = isClimbable(name) and MAX_SAME_CLIMB or MAX_SAME_NAME
-        if ok and wanted and (perName[name] or 0) < limit then
-            perName[name] = (perName[name] or 0) + 1
-            slot = slot + 1
-            marked[#marked + 1] = "loc " .. name
-            placeMarker(slot, loc.coordGrid, loc.width or 1, loc.length or 1)
+-- Centre of a loc's footprint, fine units (position is its south-west tile).
+local function locCentre(loc)
+    return loc.position.x + ((loc.width or 1) - 1) * TILE / 2, loc.position.z + ((loc.length or 1) - 1) * TILE / 2
+end
+
+local function cleanName(name) return tostring(name or ""):gsub("<[^>]*>", ""):lower() end
+
+-- Does a scene name match a name from the guide? "Water wheel" for "water
+-- wheel", "Crates" for "crate", "Small boxes" for "boxes".
+local function sameThing(sceneName, wanted)
+    sceneName, wanted = cleanName(sceneName), wanted:lower()
+    local function bare(s) return (s:gsub("e?s$", "")) end
+    return sceneName == wanted or bare(sceneName) == bare(wanted)
+        or bare(sceneName:match("(%S+)$") or "") == bare(wanted:match("(%S+)$") or "")
+            and (#wanted:match("(%S+)$") >= 4)
+end
+
+local PLACE_COS = 0.38            -- within ~67 degrees of the compass direction counts as "east of"
+local EXTREME_NEAR = 12           -- tiles; "the bookcase on the eastern wall" is one of these nearby
+local NAV_ROUGH = 16              -- tiles; a highlighted target this near the step's map spot is where to go
+
+-- Is fine offset (dx, dz) roughly in compass direction `dir` ({ x, z })?
+local function inDirection(dx, dz, dir)
+    local length, dirLength = math.sqrt(dx * dx + dz * dz), math.sqrt(dir[1] ^ 2 + dir[2] ^ 2)
+    return length > 0 and (dx * dir[1] + dz * dir[2]) / (length * dirLength) >= PLACE_COS
+end
+
+-- The nearest thing in the scene called `anchor` ("water wheel", "hatch"):
+-- a loc nearby or one of the step's NPCs. Fine x, z, or nil.
+local function findAnchor(player, anchor)
+    local best, bestDistance = nil, math.huge
+    local function consider(x, z)
+        local d = (x - player.position.x) ^ 2 + (z - player.position.z) ^ 2
+        if d < bestDistance then best, bestDistance = { x = x, z = z }, d end
+    end
+    pcall(function()
+        for _, loc in pairs(LocList.ByDistance(player.coordGrid, LOC_SEARCH_RANGE, true)) do
+            if sameThing(loc.displayName, anchor) then pcall(function() consider(locCentre(loc)) end) end
+        end
+    end)
+    for _, name in ipairs(npcNames) do
+        if sameThing(name, anchor) then
             pcall(function()
-                -- Centre of its footprint (position is its south-west tile).
-                local x = loc.position.x + ((loc.width or 1) - 1) * TILE / 2
-                local z = loc.position.z + ((loc.length or 1) - 1) * TILE / 2
-                trackedLocs[#trackedLocs + 1] = { x = x, top = locTop(loc), z = z }
-                targetsSeen[#targetsSeen + 1] = { x = x, z = z }
+                for _, npc in pairs(NPCList.ByName(name)) do consider(npc.position.x, npc.position.z) end
+            end)
+        end
+    end
+    return best
+end
+
+-- Narrow one name's candidates (nearest first) to the one the step means,
+-- as `placement` says (see Advance.Placement). Unchanged when the scene
+-- doesn't fit (no anchor in sight, nothing on that side).
+local function placeGroup(player, group, placement)
+    local px, pz = player.position.x, player.position.z
+    if placement.anchor then
+        local anchor = findAnchor(player, placement.anchor)
+        if anchor == nil then return group end
+        local pool = group
+        if placement.dir then
+            pool = {}
+            for _, f in ipairs(group) do
+                if inDirection(f.x - anchor.x, f.z - anchor.z, placement.dir) then pool[#pool + 1] = f end
+            end
+            if #pool == 0 then return group end
+        end
+        local best, bestDistance = nil, math.huge
+        for _, f in ipairs(pool) do
+            local d = (f.x - anchor.x) ^ 2 + (f.z - anchor.z) ^ 2
+            if d > 0 and d < bestDistance then best, bestDistance = f, d end
+        end
+        return best and { best } or group
+    elseif placement.centre then
+        -- "in the middle of the prison": the one nearest the middle of them all.
+        if #group < 2 then return group end
+        local cx, cz = 0, 0
+        for _, f in ipairs(group) do cx, cz = cx + f.x / #group, cz + f.z / #group end
+        local best, bestDistance = nil, math.huge
+        for _, f in ipairs(group) do
+            local d = (f.x - cx) ^ 2 + (f.z - cz) ^ 2
+            if d < bestDistance then best, bestDistance = f, d end
+        end
+        return best and { best } or group
+    elseif placement.extreme then
+        -- The furthest that way; "second from the north" the next one along.
+        local pool = {}
+        for _, f in ipairs(group) do
+            if f.d <= EXTREME_NEAR then pool[#pool + 1] = f end
+        end
+        table.sort(pool, function(a, b)
+            return a.x * placement.dir[1] + a.z * placement.dir[2] > b.x * placement.dir[1] + b.z * placement.dir[2]
+        end)
+        local pick = pool[math.min(placement.rank or 1, #pool)]
+        return pick and { pick } or group
+    else
+        local pool = {}
+        for _, f in ipairs(group) do
+            if inDirection(f.x - px, f.z - pz, placement.dir) then pool[#pool + 1] = f end
+        end
+        return #pool > 0 and pool or group
+    end
+end
+
+-- Outline scenery picked by `match`, from marker `slot` on; returns the new
+-- slot. The nearest first (the game's list isn't in distance order), at
+-- most a few of each name and one way up or down, narrowed by `place`
+-- (function(name) -> placement or nil) when the step says which one.
+local function markScenery(player, match, slot, marked, place)
+    local found, groups = {}, {}
+    for _, loc in pairs(LocList.ByDistance(player.coordGrid, LOC_SEARCH_RANGE, true)) do
+        local ok, wanted = pcall(match, loc)
+        if ok and wanted then
+            local x, z = 0, 0
+            pcall(function() x, z = locCentre(loc) end)
+            local d = 0
+            pcall(function() d = math.sqrt((x - player.position.x) ^ 2 + (z - player.position.z) ^ 2) / TILE end)
+            found[#found + 1] = { loc = loc, name = tostring(loc.displayName), x = x, z = z, d = d }
+        end
+    end
+    table.sort(found, function(a, b) return a.d < b.d end)
+    if place ~= nil then
+        -- Names placed the same way are one group: "the singular crate
+        -- north-west of the hatch" picks among "Crate" and "Crates" alike.
+        local kept, byName = {}, {}
+        for _, f in ipairs(found) do
+            if byName[f.name] == nil then
+                local ok, placement = pcall(place, cleanName(f.name))
+                placement = ok and placement or nil
+                local key = f.name
+                if placement then
+                    key = string.format("%s|%s|%s|%s", placement.dir and placement.dir[1] or "",
+                        placement.dir and placement.dir[2] or "", placement.anchor or "", tostring(placement.extreme))
+                end
+                groups[key] = groups[key] or { placement = placement }
+                byName[f.name] = groups[key]
+            end
+            table.insert(byName[f.name], f)
+        end
+        for _, f in ipairs(found) do
+            local group = byName[f.name]
+            if group.placement and group.kept == nil then
+                local ok, picked = pcall(placeGroup, player, group, group.placement)
+                group.kept = {}
+                for _, g in ipairs(ok and picked or group) do group.kept[g] = true end
+            end
+            if group.kept == nil or group.kept[f] then kept[#kept + 1] = f end
+        end
+        found = kept
+    end
+    local perName, climbs = {}, 0
+    for _, f in ipairs(found) do
+        if slot >= MAX_MARKERS then break end
+        local climb = isClimbable(f.name)
+        if (climb and climbs < MAX_SAME_CLIMB) or (not climb and (perName[f.name] or 0) < MAX_SAME_NAME) then
+            if climb then climbs = climbs + 1 end
+            perName[f.name] = (perName[f.name] or 0) + 1
+            slot = slot + 1
+            marked[#marked + 1] = "loc " .. f.name
+            placeMarker(slot, f.loc.coordGrid, f.loc.width or 1, f.loc.length or 1)
+            pcall(function()
+                trackedLocs[#trackedLocs + 1] = { x = f.x, top = locTop(f.loc), z = f.z }
+                targetsSeen[#targetsSeen + 1] = { x = f.x, z = f.z }
             end)
         end
     end
@@ -439,10 +585,10 @@ function World.Update()
     if floorWay ~= nil then
         slot = markScenery(player, stairsGoing(floorWay), slot, marked)
     elseif sceneryMatch ~= nil and player ~= nil then
-        slot = markScenery(player, sceneryMatch, slot, marked)
+        slot = markScenery(player, sceneryMatch, slot, marked, placeFor)
     end
-    if slot == 0 and fallbackMatch ~= nil and player ~= nil and playerLevel(player) > 0 then
-        slot = markScenery(player, fallbackMatch, slot, marked)
+    if slot == 0 and fallbackMatch ~= nil and player ~= nil then
+        slot = markScenery(player, fallbackMatch, slot, marked, placeFor)
     end
     if slot == 0 and wrongSide then slot = markScenery(player, exitMatcher, slot, marked) end
     World.lastMarked = table.concat(marked, ", ")
@@ -451,7 +597,9 @@ function World.Update()
     end
 
     local navDistance = navTile and World.DistanceTo(navTile)
-    if World.beaconEnabled and navTile ~= nil and (navDistance == nil or navDistance > BEACON_HIDE_DISTANCE) then
+    -- A rough spot ("the room to the north") gets dots but no marker.
+    if World.beaconEnabled and navTile ~= nil and not navTile.rough
+        and (navDistance == nil or navDistance > BEACON_HIDE_DISTANCE) then
         if beacon == nil or not beacon.isValid then
             beacon = makeEntity("rs3qb-tile", rectShape(1, 1, BEACON_COLOUR, true))
             if beacon ~= nil then beacon:SetDrawDistance(48 * TILE, 64 * TILE) end
@@ -484,10 +632,22 @@ function World.Update()
             if crossing ~= nil then pcall(buildPath, player, crossing.x * TILE + TILE / 2, crossing.z * TILE + TILE / 2) end
         elseif floorWay ~= nil and #trackedLocs > 0 then
             pcall(buildPath, player, trackedLocs[1].x, trackedLocs[1].z)
-        elseif navTile ~= nil then
-            pcall(buildPath, player, navTile.x * TILE + TILE / 2, navTile.y * TILE + TILE / 2)
-        elseif #targetsSeen > 0 then
-            pcall(buildPath, player, targetsSeen[1].x, targetsSeen[1].z)
+        else
+            -- The nearest highlighted thing beats the map spot when it's
+            -- around there: a wiki page's spot can be a whole room off (the
+            -- Elemental Workshop's furnace).
+            local nearest, nearestDistance = nil, math.huge
+            for _, seen in ipairs(targetsSeen) do
+                local d = (seen.x - player.position.x) ^ 2 + (seen.z - player.position.z) ^ 2
+                if d < nearestDistance then nearest, nearestDistance = seen, d end
+            end
+            local nearNav = nearest ~= nil and navTile ~= nil
+                and math.sqrt((nearest.x / TILE - navTile.x) ^ 2 + (nearest.z / TILE - navTile.y) ^ 2) <= NAV_ROUGH
+            if navTile ~= nil and not nearNav then
+                pcall(buildPath, player, navTile.x * TILE + TILE / 2, navTile.y * TILE + TILE / 2)
+            elseif nearest ~= nil then
+                pcall(buildPath, player, nearest.x, nearest.z)
+            end
         end
     end
     return npcCount, slot - npcSlots

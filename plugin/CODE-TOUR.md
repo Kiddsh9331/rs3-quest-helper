@@ -1,7 +1,7 @@
 # Code tour
 
 Jagex only accepts plugins whose author understands the code, AI-assisted or
-not. This is a map for reading it all once: about 4,400 lines of Lua, plus
+not. This is a map for reading it all once: about 4,800 lines of Lua, plus
 `quests.lua` (77,000 lines of generated data, no logic). Suggested order:
 the small modules first, then `app.lua`, which ties them together.
 
@@ -45,35 +45,38 @@ sessions kept. Never leaves the device.
 tile edges, solid objects block tiles, doors count as open. Pure logic, no
 game calls.
 
-**probe.lua** (184). Reads text from the game's interfaces, only components
+**probe.lua** (218). Reads text from the game's interfaces, only components
 the game reports as visible. Used to find the dialogue box and match the
 step's chat options against its text.
 
-**card.lua** (338). The step card on the game screen: title bar (click to
+**card.lua** (392). The step card on the game screen: title bar (click to
 pick up and move), progress strip, text blocks. Also turns matching
 dialogue options blue (text colour only).
 
-**view.lua** (360). Draws the ribbon panel from a list of "rows" (title,
+**view.lua** (439). Draws the ribbon panel from a list of "rows" (title,
 text, buttons, step with checkbox...). Handles scrolling and only redraws
 when the rows changed.
 
-**advance.lua** (503). The step logic, pure text rules (no game calls):
+**advance.lua** (904). The step logic, pure text rules (no game calls):
 what kind of step it is (travel, climb, use, make, get, fight), which step a
 click belongs to (`MatchInteraction`), whether climbing or arriving finishes
 a step, what a step says to get, item quantities in the backpack, landmarks
-vs things to click ("north of the well" vs "search the crate").
+vs things to click ("north of the well" vs "search the crate"), and which
+one of several a step means (`Placement`: "the lever by the water wheel").
 
-**world.lua** (557). Everything drawn in the 3D world: tile outlines and
-arrows over the NPCs/objects the step names (`SetTargets`, `Update`), the
+**world.lua** (717). Everything drawn in the 3D world: tile outlines and
+arrows over the NPCs/objects the step names (`SetTargets`, `Update`; nearest
+first, narrowed to the one the step means by `placeGroup`), the
 right stairs when you're on the wrong floor or underground, the tile marker,
 and the dotted path (`drawPath`, using path.lua with the walls nearby).
 
-**app.lua** (1,948). The plugin itself, top to bottom:
+**app.lua** (2,310). The plugin itself, top to bottom:
 1. Settings, saved state (current quest and step per quest), step lists.
 2. Quest status and progress from the game's quest data.
 3. Items: what each step needs, backpack checks, Grand Exchange or recipe hints.
 4. `stepTargets`: who and where a step is about (NPCs, place, map tile).
-5. `sceneryMatcher`: which objects to outline for a step.
+5. `sceneryMatcher`: which objects to outline for a step (`fallbackMatcher`:
+   what to outline when none of them is in sight).
 6. Step text for the card and panel (`stepBlocks`), then the card.
 7. Dialogue: noticing the conversation box, colouring the step's options.
 8. Moving through steps: `setStep`, and the auto-advance rules (clicks,
@@ -81,7 +84,7 @@ and the dotted path (`drawPath`, using path.lua with the walls nearby).
 9. The panel screens: quest list, guide, settings.
 10. Event subscriptions and startup.
 
-**devtools.lua** (131, test build only, not in the release zip). The
+**devtools.lua** (173, test build only, not in the release zip). The
 Debug section: dump visible interface text to the console, test a wiki
 download, show the progress value log.
 
