@@ -466,6 +466,13 @@ for i = 2500, 2510 do M.interfaces[i] = { [1] = M.label("Basic Ability", 10) } e
 M.fire("ServerLogic")
 check("mass interface reload not learned as dialogue", #M.db.dialogInterfaces3 == 1)
 for i = 2500, 2510 do M.interfaces[i] = nil end
+-- The numbered options come up a "Continue" or two after the chat head
+-- (beta: option 2 never turned blue): the watch restarts on Continue.
+M.select("Continue", "", 1)
+M.interfaces[1190] = { [1] = M.label("1.", 380), [2] = M.label("Yes please", 400) }
+M.fire("ServerLogic")
+check("options opened after Continue are learned", #M.db.dialogInterfaces3 == 2 and M.db.dialogInterfaces3[2] == 1190)
+M.interfaces[1190] = nil
 
 -- Skipping ahead: talking to Thurgo (step 3) jumps there.
 M.select("Talk-to", "Thurgo")
@@ -571,10 +578,15 @@ M.player.position = { x = 2956 * 512, y = 0, z = 3502 * 512 }
 M.fire("ServerLogic")
 check("arrival completes the travel step", gd() == 2)
 
--- Talking to a general: progress rises and the step completes.
+-- Talking to a general: progress rises and the step completes. Beta
+-- (Fight Arena): the var moved for cutscenes and arena stages, ticking
+-- "Talk to Hengrad" before anyone talked to him. So a move on a talk step
+-- waits for a Talk-to on that NPC.
 M.questVar.value = 13 -- one rise, like the real 0 -> 3
 M.fire("VarTransmit")
-check("progress rise completes the step", gd() == 3)
+check("progress on a talk step waits for the talk", gd() == 2)
+M.select("Talk-to", "<col=ffff00>General Wartface</col>")
+check("...and the talk then completes it", gd() == 3 and anyText("then you talked to general wartface") ~= nil)
 
 -- Step 3's sub-bullets name the ladder; crates are in the main text.
 M.locs = { M.loc("Ladder", "ladder-tile", { "Climb-up" }), M.loc("Crate", "crate-tile", { "Search" }),
@@ -704,7 +716,36 @@ check("requirements from the game's quest data", anyText("^REQUIREMENTS$") ~= ni
 
 M.questVar.value = 20 -- talking to Morgan starts the quest
 M.fire("VarTransmit")
-check("VS step 1 done by progress", vs() == 2)
+check("VS step 1 held without a talk", vs() == 1)
+for _ = 1, 200 do M.fire("ServerLogic") end
+check("...a held move counts after a while", vs() == 2 and anyText("no talk on Morgan seen") ~= nil)
+-- "Talk to Angor in the bar": the bar is where, not what to click.
+local barObject, barLandmark = Advance.MentionRoles("Talk to Angor in the bar to the west, and buy a brew.", "bar")
+check("'in the bar' is a landmark", barObject == 0 and barLandmark == 1)
+-- "The cell door north of Lazy Khazard Guard": the guard isn't highlighted
+-- but anchors the placement; any door near the spot is outlined.
+local inside = RS3QB_REPLAY.inside
+local vsQuest = inside.currentQuest()
+local vsList = inside.flatSteps.vampyre_slayer
+vsList[#vsList + 1] = { step = { text = "Use the keys on Sammy's cell door north of Morgan.", npcs = { "Morgan" } },
+    index = #vsList + 1, section = vsList[1].section }
+local doorTargets = inside.stepTargets(vsQuest, #vsList)
+check("a landmark NPC isn't a target", #doorTargets.npcs == 0 and doorTargets.landmarks[1] == "Morgan"
+    and doorTargets.nav ~= nil)
+local doorMatch = inside.fallbackMatcher(vsQuest, #vsList)
+local savedPos = M.player.position
+M.player.position = { x = doorTargets.nav.x * 512, y = 0, z = doorTargets.nav.y * 512 }
+M.fire("ServerLogic") -- World notes where the player stands
+check("a use-on-door step outlines doors there", doorMatch ~= nil and doorMatch({ displayName = "Prison door" })
+    and not doorMatch({ displayName = "Trapdoor" }))
+M.player.position = savedPos
+vsList[#vsList] = nil
+-- "Buy a bottle of Khali brew for five coins": the coins are the price.
+local wants = inside.acquireWants(vsQuest, { step = { text = "Talk to the barman and buy a beer for 2 coins.", npcs = { "beer" } }, index = 4 })
+local wantNames = {}
+for _, w in ipairs(wants) do wantNames[#wantNames + 1] = w.name end
+local joined = "," .. table.concat(wantNames, ",") .. ","
+check("coins paid aren't a wanted item", joined:find(",beer,", 1, true) ~= nil and joined:find("coin", 1, true) == nil)
 
 -- "Go upstairs ... to get a garlic": arriving isn't enough, the garlic is.
 M.player.position = { x = 3096 * 512, y = 0, z = 3270 * 512 }
@@ -743,7 +784,10 @@ check("beer completes the buy step", vs() == 5)
 later()
 M.questVar.value = 21 -- Dr Harlow
 M.fire("VarTransmit")
-check("Harlow step done by progress", vs() == 6)
+check("Harlow's progress waits for the talk", vs() == 5)
+M.questVar.value = 22
+M.fire("VarTransmit")
+check("a second move while waiting counts, one step only", vs() == 6 and anyText("quest progress moved twice") ~= nil)
 M.backpack = { { "Garlic", 1, 601 }, { "Stake", 1, 603 }, { "Stake hammer", 1, 604 } }
 M.fire("InventoryUpdated")
 check("stake and stake hammer complete the step", vs() == 7)

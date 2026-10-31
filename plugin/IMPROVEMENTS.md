@@ -406,6 +406,15 @@ Prompt:
 Do item A13 from plugin/IMPROVEMENTS.md: after an in-game Probe API run, set the money pouch inventory from what it logged (name or id) instead of the search, and if a worn-equipment inventory shows up, use it for "Equip the armour" steps (A5). Test, no commit.
 ```
 
+### A14. Progress moves that don't match the guide's steps
+Status: done 2026-10-31 (talk and fight steps); replay of beta session 6 matches the play
+Evidence: Fight Arena, beta session 6: the var moved for the arena cutscene (14:46) and each stage, so "Kill the Khazard ogre" ticked before the fight, "Talk to Hengrad" and "Open the prison door" ticked while the player was still in the arena. Also: "Talk to Angor in the bar" outlined three bar counters; "Sammy's cell door north of Lazy Khazard Guard" highlighted the guard and no door; "buy a bottle of Khali brew for five coins" never finished because coins counted as a wanted item; option 2 in Angor's dialogue wasn't blue because the options interface opens after "Continue", when the dialogue watch had already stopped.
+Notes: `recentActs` (app.lua) remembers the last Talk-to and Attack and when each step began. A progress move on a "Talk to X" step (MainAction talk/speak, NPC targets) counts only after a Talk-to on X since the previous step began, otherwise it's held (`recentActs.pending`, recording note "progress moved on step N, waiting for a talk on X"); the talk then finishes the step. A "Kill X" step needs an Attack on X before the move. A second move while holding counts for one step; after `TUNE.holdVar` (200 ticks) it counts anyway. Landmark NPCs go to `targets.landmarks` (anchors for placements, not highlighted); "in"/"at" are landmark words; a use-on-door step gets the door fallback with the step's placement; coins after "for ... coins" aren't acquire wants; the dialogue watch restarts on "Continue" and keeps going after the first interface; `id.Interface.DIALOGUE_OPTIONS` seeds the options interface. Not done: per-quest var tables (the official helper's approach) for steps that aren't talk or fight; "Open the prison door" still needs chat access (own click) or the next var.
+Prompt:
+```
+Do item A14 from plugin/IMPROVEMENTS.md: review the held-var rule against new recordings (read_rec notes "waiting for"), tune TUNE.holdVar, and consider holding "Enter/Open the door" steps until a door click. Test, replay every session, no commit.
+```
+
 ---
 
 ## B. UI and text for any screen size and ratio

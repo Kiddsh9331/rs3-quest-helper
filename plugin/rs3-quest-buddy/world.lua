@@ -38,6 +38,7 @@ local BEACON_HEIGHT = 1800
 local npcNames = {}               -- display names to highlight
 local sceneryMatch = nil          -- function(loc) -> true to outline that object, or nil
 local fallbackMatch = nil         -- used when nothing else is in sight (stairs upstairs, doors to enter)
+local landmarkNames = {}          -- NPCs the step only places things by ("north of Lazy Khazard Guard")
 local placeFor = nil              -- function(name) -> which one of several the step means (Advance.Placement)
 local navTile = nil               -- { x, y, plane } destination, or nil
 local markers, markerShapes = {}, {}
@@ -128,8 +129,9 @@ end
 -- sight: the stairs upstairs, the doors for "Enter the manor"). `place`
 -- (function(name) -> placement or nil) narrows several of one name to the
 -- one the step means.
-function World.SetTargets(names, match, nav, fallback, place)
+function World.SetTargets(names, match, nav, fallback, place, landmarks)
     npcNames, sceneryMatch, navTile, fallbackMatch, placeFor = names or {}, match, nav, fallback, place
+    landmarkNames = landmarks or {}
     trackedNPCs = {}
 end
 
@@ -418,7 +420,10 @@ local function findAnchor(player, anchor)
             if sameThing(loc.displayName, anchor) then pcall(function() consider(locCentre(loc)) end) end
         end
     end)
-    for _, name in ipairs(npcNames) do
+    local candidates = {}
+    for _, name in ipairs(npcNames) do candidates[#candidates + 1] = name end
+    for _, name in ipairs(landmarkNames) do candidates[#candidates + 1] = name end
+    for _, name in ipairs(candidates) do
         if sameThing(name, anchor) then
             pcall(function()
                 for _, npc in pairs(NPCList.ByName(name)) do consider(npc.position.x, npc.position.z) end

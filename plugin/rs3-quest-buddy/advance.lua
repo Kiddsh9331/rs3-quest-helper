@@ -289,6 +289,7 @@ local LANDMARK_WORDS = { near = true, by = true, beside = true, behind = true, o
     inside = true, opposite = true, past = true, around = true, between = true, above = true, below = true,
     under = true, beneath = true, across = true, along = true, beyond = true, toward = true,
     towards = true, guarding = true, overlooking = true, facing = true, against = true,
+    ["in"] = true, at = true, -- "Talk to Angor in the bar": the bar is where, not what
     ["not"] = true }   -- "Exit using the ladder (not the portal)"
 -- These only with the word after: "north of the well", "next to the sign",
 -- "in front of the gate" (not "the west statue", "the next 3 statues").

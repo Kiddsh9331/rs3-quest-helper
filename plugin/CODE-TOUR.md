@@ -57,20 +57,20 @@ dialogue options blue (text colour only).
 text, buttons, step with checkbox...). Handles scrolling and only redraws
 when the rows changed.
 
-**advance.lua** (929). The step logic, pure text rules (no game calls):
+**advance.lua** (930). The step logic, pure text rules (no game calls):
 what kind of step it is (travel, climb, use, make, get, fight), which step a
 click belongs to (`MatchInteraction`), whether climbing or arriving finishes
 a step, what a step says to get, item quantities in the backpack, landmarks
 vs things to click ("north of the well" vs "search the crate"), and which
 one of several a step means (`Placement`: "the lever by the water wheel").
 
-**world.lua** (717). Everything drawn in the 3D world: tile outlines and
+**world.lua** (722). Everything drawn in the 3D world: tile outlines and
 arrows over the NPCs/objects the step names (`SetTargets`, `Update`; nearest
 first, narrowed to the one the step means by `placeGroup`), the
 right stairs when you're on the wrong floor or underground, the tile marker,
 and the dotted path (`drawPath`, using path.lua with the walls nearby).
 
-**app.lua** (2,388). The plugin itself, top to bottom:
+**app.lua** (2,501). The plugin itself, top to bottom:
 1. Settings, saved state (current quest and step per quest), step lists.
 2. Quest status and progress from the game's quest data.
 3. Items: what each step needs, backpack checks, Grand Exchange or recipe hints.

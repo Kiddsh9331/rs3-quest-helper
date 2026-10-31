@@ -37,15 +37,15 @@
   "jump-click": 6,
   "link-unknown": 169,
   "markup": 1,
-  "no-nav": 713,
-  "no-trigger": 3593,
-  "outlines": 1812,
+  "no-nav": 701,
+  "no-trigger": 3653,
+  "outlines": 1784,
   "picture": 48,
-  "placed": 456,
+  "placed": 442,
   "travel-early": 16,
   "travel-early-chat": 3,
-  "travel-no-place": 370,
+  "travel-no-place": 373,
   "travel-waits": 715,
-  "unplaced": 151
+  "unplaced": 148
  }
 }

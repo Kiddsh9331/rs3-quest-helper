@@ -50,7 +50,10 @@ quest" below).
   door is locked"); this needs chat access, and a step that names items
   ("With thread and leather, fix the bellows") waits for the game instead;
   the quest's progress var
-  moving finishes the step you were on; picking up an "Obtain/Mine..." item
+  moving finishes the step you were on, except that on a "Talk to X" step
+  it waits until you've actually clicked Talk-to on X (then the talk
+  finishes the step), and on a "Kill X" step until you've attacked X; a
+  second move while waiting, or two minutes, counts anyway; picking up an "Obtain/Mine..." item
   ticks that step (also a step or two early); handing a step's items over
   ticks it; getting an item the next step uses ticks the current one;
   reaching what a "follow ... until X" step looks for ticks it; finishing the
@@ -81,6 +84,11 @@ quest" below).
 - **Dotted path** towards the next place, one dot per tile, walking around
   walls and solid objects (doors count as open). Water and cliffs that are
   part of the ground aren't objects, so the path can't see them.
+- **Landmarks**: "the cell door north of Lazy Khazard Guard" or "Angor
+  in the bar" don't highlight the guard or the bar; they only say where.
+  "Use the keys on Sammy's cell door" outlines the doors there, the one
+  north of the guard first. "Buy a brew for five coins" doesn't wait for
+  coins to turn up: they're the price.
 - **Rough spots**: "Head inside the room to the north" with no map spot
   gets dots to a spot that way from the last place (no marker, a wider
   "arrived"); "Go to the cave" borrows the next step's spot.

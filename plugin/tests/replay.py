@@ -31,6 +31,11 @@ def run_replay(game_lines):
     with open(fixture, encoding="utf8") as f:
         fixture_text = f.read()
     opened = {recording.parse(line)[2][0] for line in game_lines if recording.parse(line)[1] == "open"}
+    # A session that starts with a quest already open never records "open".
+    for line in game_lines:
+        kind, args = recording.parse(line)[1], recording.parse(line)[2]
+        if kind == "start" and len(args) > 1 and args[1]:
+            opened.add(args[1])
     if all('key = "%s"' % key in fixture_text for key in opened):
         lua.globals().TEST_QUESTS = fixture
         lua.execute("package.loaded.quests = dofile(TEST_QUESTS)")

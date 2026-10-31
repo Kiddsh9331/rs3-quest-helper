@@ -59,6 +59,7 @@ local TUNE = {
     ownTeleportFar = 60,    -- tiles; a step's own teleport replaces the dots from further than this
     clickSettle = 3,        -- ticks after clicking the step's own object before it counts
     resizeSettle = 10,      -- ticks after the panel stops resizing before it's redrawn
+    holdVar = 200,          -- ticks a progress move waits for the step's own talk or attack before it counts anyway
 }
 -- The quest list's filters and letter jumps; the card sizes cycle.
 local LIST = {
@@ -108,6 +109,10 @@ local backpackInterfaces = {}   -- interfaces where backpack item icons were fou
 local backpackScanCooldown = 0
 local finishedSeen = false
 local serverTick = 0            -- server ticks since load
+-- What the player did lately: a progress move on "Talk to X" only counts
+-- after a Talk-to on X, on "Kill X" after an Attack on X (Fight Arena's
+-- var moves for cutscenes and arena stages, not per guide step).
+local recentActs = { talk = nil, attack = nil, began = {}, pending = nil, now = 0 }
 local lastItemStep = -100       -- serverTick when the backpack last moved the step (see onBackpackChange)
 local travelHint = nil          -- { name, walk }: teleport suggestion for the current step
 local climbsDone = 0            -- climbs made on the current step ("the ladder, then the staircase")
@@ -660,7 +665,7 @@ function stepTargets(quest, index)
     if entry == nil then return { npcs = {}, items = {} } end
     if entry.targets ~= nil then return entry.targets end
     local step = entry.step
-    local targets = { npcs = {}, items = {} }
+    local targets = { npcs = {}, items = {}, landmarks = {} }
     local navRank = 99
     -- "Teleport to Falador and run north to the Goblin Village": a travel
     -- step's destination is the last place it names, not the first.
@@ -672,8 +677,16 @@ function stepTargets(quest, index)
         elseif info.kind == "npc" or (info.kind == nil and Advance.LooksLikeName(step.text, page)) then
             -- An NPC, or an unplaced page written as a name in the step:
             -- worth a look. Not achievements, quests, skills, spells
-            -- ("other") or "your backpack" and "the minimap".
-            targets.npcs[#targets.npcs + 1] = page:gsub("%s*%b()", "")
+            -- ("other") or "your backpack" and "the minimap". "The cell
+            -- door north of Lazy Khazard Guard": he's where, not whom, so
+            -- he anchors the placement but isn't highlighted.
+            local name = page:gsub("%s*%b()", "")
+            local object, landmark = Advance.MentionRoles(step.text, name:lower())
+            if landmark > 0 and object == 0 then
+                targets.landmarks[#targets.landmarks + 1] = name
+            else
+                targets.npcs[#targets.npcs + 1] = name
+            end
         end
         local rank = NAV_PRIORITY[info.kind or ""] or 5
         -- Where an item is found only matters when the step gets it: "With
@@ -699,6 +712,7 @@ function stepTargets(quest, index)
     end
     local listed = {}
     for _, name in ipairs(targets.npcs) do listed[name] = true end
+    for _, name in ipairs(targets.landmarks) do listed[name] = true end
     for _, npc in ipairs(questNPCs(quest)) do
         if not listed[npc.name] and Advance.Mentions(step.text, npc.name) then
             listed[npc.name] = true
@@ -967,7 +981,13 @@ end
 local function fallbackMatcher(quest, index)
     local list = flatSteps[quest.key]
     if list[index] == nil or Advance.IsTravelStep(list[index].step) then return nil end
-    if Advance.IsEnterStep(list[index].step) then
+    local text = list[index].step.text:lower()
+    -- "Use the keys on Sammy's cell door": the game calls it "Prison door"
+    -- or just "Door", so any door there, narrowed by the step's placement
+    -- ("north of Lazy Khazard Guard").
+    local usedOnDoor = Advance.IsUseStep(list[index].step)
+        and (text:match("%son%s+[%w'%- ]-doors?%f[%A]") ~= nil or text:match("%son%s+[%w'%- ]-gates?%f[%A]") ~= nil)
+    if Advance.IsEnterStep(list[index].step) or usedOnDoor then
         local nav = stepTargets(quest, index).nav
         return function(loc)
             local name = Advance.Clean(loc.displayName or "")
@@ -1232,7 +1252,9 @@ local function checkDialogueWatch()
     end
     if #opened == 0 then
         if dialogueWatch.ticksLeft <= 0 then
-            reports.dialogue = "Talk-to: no new interface opened within " .. DIALOGUE_WATCH_TICKS .. " ticks."
+            if not dialogueWatch.seen then
+                reports.dialogue = "Talk-to: no new interface opened within " .. DIALOGUE_WATCH_TICKS .. " ticks."
+            end
             dialogueWatch = nil
         end
         return
@@ -1259,7 +1281,10 @@ local function checkDialogueWatch()
     end
     reports.dialogue = "Conversation opened " .. table.concat(parts, "<br>")
     Diag.Note(reports.dialogue)
-    dialogueWatch = nil
+    -- The chat head comes first and the numbered options a "Continue" or
+    -- two later: keep watching for the rest of the window.
+    dialogueWatch.baseline = Probe.LoadedSet()
+    dialogueWatch.seen = true
 end
 
 -- Turn the current step's options blue wherever a conversation was seen.
@@ -1268,6 +1293,10 @@ end
 -- over the option. The recording notes any matches skipped that way.
 local function updateOptionMarks()
     local candidates = stepCandidates(currentEntry())
+    if #dialogInterfaces == 0 then
+        local seed = safe(function() return id.Interface.DIALOGUE_OPTIONS end)
+        if type(seed) == "number" then learnDialogInterface(seed) end
+    end
     if #candidates == 0 or #dialogInterfaces == 0 then
         Recorder.AddIfChanged("optionmarks", "")
         Card.MarkOptions({})
@@ -1342,11 +1371,13 @@ local function setStep(index, why, source)
     local from = currentIndex()
     climbsDone = 0
     stepIndex[questKey] = math.max(1, math.min(index, #list + 1))
+    recentActs.began[stepIndex[questKey]] = recentActs.now
+    recentActs.pending = nil
     PersistentDB:SetStructuredData(DB_STEPS, stepIndex)
     if why then reports.auto = string.format("Auto: step %d (%s)", stepIndex[questKey], why) end
     local targets = stepTargets(quest, currentIndex())
     local match, place = sceneryMatcher(currentEntry())
-    World.SetTargets(targets.npcs, match, targets.nav, fallbackMatcher(quest, currentIndex()), place)
+    World.SetTargets(targets.npcs, match, targets.nav, fallbackMatcher(quest, currentIndex()), place, targets.landmarks)
     local nav = targets.nav and (targets.nav.x .. "," .. targets.nav.y .. (targets.nav.rough and " rough" or "")) or "none"
     Diag.Snapshot("stepTargets", string.format("step %d npcs=%s items=%s nav=%s", currentIndex(),
         table.concat(targets.npcs, "|"), table.concat(targets.items, "|"), nav))
@@ -1416,6 +1447,7 @@ end
 local pendingClick = nil -- { index, tick, subject }
 local noteOwnClick -- defined below (needs acquireWants)
 
+local checkPendingVar -- defined with the progress var below
 local function onInteraction(event)
     local entry = event.entry
     local verb = safe(function() return entry.verbText end) or ""
@@ -1430,15 +1462,27 @@ local function onInteraction(event)
             or safe(function() return entry.ComponentData.interfaceID end)
         reports.action = reports.action .. " in " .. (interfaceID and Probe.InterfaceName(interfaceID) or "?")
         Recorder.Add("click", verb, subject, entryType, interfaceID)
+        -- The options come up after a "Continue" or two: keep looking.
+        if Advance.Clean(verb) == "continue" then startDialogueWatch() end
         return
     end
     -- Other players' names stay out of the recording.
     local isPlayer = MiniMenuEntryType ~= nil and entryType == MiniMenuEntryType.PLAYER
     Recorder.Add("click", verb, isPlayer and "(a player)" or subject, entryType)
-    if Advance.Clean(verb):find("talk", 1, true) then startDialogueWatch() end
+    local lowVerb = Advance.Clean(verb)
+    if lowVerb:find("talk", 1, true) then startDialogueWatch() end
+    if lowVerb:find("talk", 1, true) or lowVerb:find("speak", 1, true) then
+        recentActs.talk = { subject = Advance.Clean(subject), tick = recentActs.now }
+    elseif lowVerb:find("attack", 1, true) or lowVerb:find("fight", 1, true) then
+        recentActs.attack = { subject = Advance.Clean(subject), tick = recentActs.now }
+    end
 
     local quest = currentQuest()
     if quest == nil or not pref("auto", true) then return end
+    -- A held progress move that this talk settles: the step is done.
+    local before = currentIndex()
+    checkPendingVar()
+    if currentIndex() ~= before then return end
     -- "Enter the manor": going through a door or gate is the step (not
     -- "Enter the cave and talk to Claus").
     local cleanSubject = Advance.Clean(subject)
@@ -1463,6 +1507,50 @@ end
 
 -- The quest's progress var rose: the step being done is finished. (Seen in
 -- testing: Goblin Diplomacy's var moves exactly on its dialogue/use steps.)
+-- Which act a progress move on this step needs first: { kind, names }
+-- for "Talk to X" (a Talk-to on X) and "Kill X" (an Attack on X), nil
+-- for everything else.
+local function varActNeeded(quest, index)
+    local entry = flatSteps[quest.key][index]
+    if entry == nil then return nil end
+    local npcs = stepTargets(quest, index).npcs
+    if #npcs == 0 then return nil end
+    local action = Advance.MainAction(entry.step)
+    if action == "talk" or action == "speak" then return { kind = "talk", names = npcs } end
+    if Advance.IsFightStep(entry.step) then return { kind = "attack", names = npcs } end
+    return nil
+end
+
+-- Did that act happen since the previous step began? (The previous one,
+-- not this one: "Talk to X" then "Talk to X again" is one conversation.)
+local function actFits(need, index)
+    local act = recentActs[need.kind]
+    if act == nil then return false end
+    local since = recentActs.began[index - 1] or recentActs.began[index] or 0
+    if act.tick < since then return false end
+    for _, name in ipairs(need.names) do
+        if act.subject:find(name:lower(), 1, true) ~= nil then return true end
+    end
+    return false
+end
+
+-- A held progress move: a talk on the right NPC finishes the step; a
+-- fight step waits for the next move (an attack isn't a kill); after a
+-- while it counts anyway.
+checkPendingVar = function()
+    local pending = recentActs.pending
+    if pending == nil then return end
+    if pending.index ~= currentIndex() then recentActs.pending = nil return end
+    if pending.need.kind == "talk" and actFits(pending.need, pending.index) then
+        recentActs.pending = nil
+        setStep(currentIndex() + 1, "quest progress moved, then you talked to " .. recentActs.talk.subject)
+    elseif recentActs.now - pending.tick >= TUNE.holdVar then
+        recentActs.pending = nil
+        setStep(currentIndex() + 1, "quest progress moved (no " .. pending.need.kind .. " on "
+            .. pending.need.names[1] .. " seen)")
+    end
+end
+
 local function onVarChange(quest, oldValue, newValue)
     local entries = varLog[quest.key] or {}
     entries[#entries + 1] = string.format("step %d: %s -> %s", currentIndex(), tostring(oldValue), tostring(newValue))
@@ -1476,6 +1564,22 @@ local function onVarChange(quest, oldValue, newValue)
     -- book), not the next step.
     local sameEvent = serverTick - lastItemStep <= ITEM_VAR_TICKS
     if pref("auto", true) and rose and not sameEvent and currentIndex() <= #flatSteps[quest.key] then
+        local need = varActNeeded(quest, currentIndex())
+        if need ~= nil and not actFits(need, currentIndex()) then
+            local pending = recentActs.pending
+            if pending ~= nil and pending.index == currentIndex() then
+                -- Moved again while waiting: that's past this step whatever
+                -- happened (one step, not two: vars often move more than
+                -- once per step).
+                recentActs.pending = nil
+                setStep(currentIndex() + 1, "quest progress moved twice")
+            else
+                recentActs.pending = { index = currentIndex(), tick = recentActs.now, need = need }
+                Recorder.Add("note", string.format("progress moved on step %d, waiting for a %s on %s",
+                    currentIndex(), need.kind, need.names[1]))
+            end
+            return
+        end
         setStep(currentIndex() + 1, "quest progress moved")
     end
 end
@@ -1488,6 +1592,12 @@ local function acquireWants(quest, entry)
     for _, need in ipairs(Advance.ItemsMentioned(entry.step, neededParsed(quest))) do wants[#wants + 1] = need end
     for _, page in ipairs(entry.step.npcs or {}) do
         if (pages[page:lower()] or {}).kind == "item" then wants[#wants + 1] = Advance.ParseNeeded(page) end
+    end
+    -- "Buy a bottle of Khali brew for five coins": the coins are the price.
+    if entry.step.text:lower():match("for%s+[%w,]+%s+coins?") then
+        for i = #wants, 1, -1 do
+            if Advance.Singular(wants[i].name) == "coin" then table.remove(wants, i) end
+        end
     end
     return wants
 end
@@ -2190,6 +2300,7 @@ end
 
 Event.ServerLogic.Subscribe("rs3qb-tick", function()
     serverTick = serverTick + 1
+    recentActs.now = serverTick
     Recorder.Tick()
     Diag.Guard("record", recordTick)
     Diag.Guard("tick", function()
@@ -2209,6 +2320,7 @@ Event.ServerLogic.Subscribe("rs3qb-tick", function()
         updateItemMarks()
         if not inCutscene then checkPosition() end
         checkPendingClick()
+        checkPendingVar()
         if World.lastMarked ~= lastMarkedSaved then
             lastMarkedSaved = World.lastMarked
             Diag.Snapshot("marked", World.lastMarked)
@@ -2374,7 +2486,8 @@ if RS3QB_REPLAY ~= nil then
         stepItems = stepItems, stepBlocks = stepBlocks, acquireWants = acquireWants,
         producedItems = producedItems, neededParsed = neededParsed, isTradeable = isTradeable,
         recipeFor = recipeFor, setPref = setPref, currentIndex = currentIndex, ownClickStep = ownClickStep,
-        bagNow = function() return backpack, bagState end,
+        bagNow = function() return backpack, bagState end, currentQuest = currentQuest,
+        acquireWants = acquireWants, fallbackMatcher = fallbackMatcher, recentActs = recentActs,
         setBackpack = function(counts) backpack = counts end,
     }
 end
