@@ -33,6 +33,7 @@
 	<script src="libs/dialog.js"></script>
 	<script src="libs/chatbox.js"></script>
 	<script src="libs/font_digits.js"></script>
+	<script src="test-tasks-fixture.js"></script>
 	<script src="app.js"></script>
 	<script>
 	(function () {
@@ -384,6 +385,15 @@
 		check("eligible: completed quest is excluded", cdn("COMPLETED", true) === false);
 		check("eligible: requirements not met is excluded", cdn("NOT_STARTED", false) === false);
 		check("eligible: unknown eligibility is excluded", cdn("NOT_STARTED", undefined) === false);
+
+		// Live: skill levels from the same account's profile (area task requirements).
+		window.__rs3qh.fetchRmLevels("Kiddsh_GIM", true, function (levels) {
+			var n = Object.keys(levels).length;
+			document.getElementById("results").textContent +=
+				"\nLIVE rm levels " + (n >= 28 && levels.Mining > 0 ? "OK: " + n + " skills" : "FAILED: " + JSON.stringify(levels));
+		}, function (msg) {
+			document.getElementById("results").textContent += "\nLIVE rm levels skipped: " + msg;
+		});
 
 		// Live end-to-end: fetch real statuses through the fallback chain.
 		window.__rs3qh.fetchRuneMetrics("Kiddsh_GIM", true, function (parsed) {
@@ -1214,6 +1224,141 @@
 		check("parser: step image captured", s3.steps[1].images.length === 1 && s3.steps[1].images[0].file === "Other.png");
 		check("parser: size param not caption", s3.steps[1].images[0].caption === "Step pic");
 		check("parser: image steps unaffected", s3.steps.length === 2 && s3.steps[0].text.indexOf("Talk to Aggie") === 0);
+
+		// ---------- area tasks ----------
+		// test-tasks-fixture.js: a trimmed copy of the real rendered
+		// "Lumbridge achievements" page, one members row from Varrock and a
+		// malformed row.
+		var R = window.__rs3qh;
+		var tset = R.parseTaskSet(window.TASK_FIXTURE_HTML);
+		var tnames = tset.tiers.map(function (t) { return t.name; }).join(",");
+		check("tasks: tiers in page order, page-top set table and later sections ignored",
+			tnames === "Beginner,Easy,Medium,Hard");
+		var tierBy = {};
+		tset.tiers.forEach(function (t) { tierBy[t.name] = t; });
+		var easy = tierBy.Easy, medium = tierBy.Medium;
+		check("tasks: rows read, malformed row skipped",
+			tierBy.Beginner.tasks.length === 2 && easy.tasks.length === 3 && medium.tasks.length === 3 &&
+			tierBy.Hard.tasks.length === 1);
+		var artisan = easy.tasks[0];
+		check("tasks: id, name, wiki page and description",
+			artisan.id === 806 && artisan.name === "Artisan Crafting" && artisan.page === "Artisan Crafting" &&
+			artisan.description === "Create a clay ring using the Draynor village pottery oven.");
+		check("tasks: skill requirement with level",
+			artisan.reqs.length === 1 && artisan.reqs[0].skill === "Crafting" && artisan.reqs[0].level === 4);
+		check("tasks: free-to-play and score", artisan.members === false && artisan.score === 5);
+		check("tasks: notes as plain text", /pottery oven in the potter's house/.test(artisan.notes) &&
+			artisan.notes.indexOf("<") === -1);
+		check("tasks: 'None' means no requirements", easy.tasks[1].name === "Camping Trip" && easy.tasks[1].reqs.length === 0);
+		check("tasks: quest requirement keeps its state", easy.tasks[2].name === "I Can't Hear Dead People" &&
+			easy.tasks[2].reqs.some(function (r) { return r.quest === "The Restless Ghost" && /\(partial\)/.test(r.text); }));
+		var duke = medium.tasks[1];
+		check("tasks: ironman-only requirements in the nested table left out",
+			duke.name === "A Meal Fit For a Duke" &&
+			duke.reqs.map(function (r) { return r.skill ? r.skill + " " + r.level : r.quest; }).join("|") === "Cooking 40|Cook's Assistant");
+		var lies = medium.tasks[2];
+		check("tasks: members row", lies.id === 956 && lies.members === true &&
+			lies.page === "What Lies Below? (Medium Varrock achievement)");
+		check("tasks: tier requirements, skills and quest",
+			easy.requirements.map(function (r) { return r.skill ? r.skill + " " + r.level : r.quest; }).join("|") ===
+			"Mining 10|Fishing 25|Smithing 20|Runecrafting 5|Crafting 4|The Restless Ghost");
+		check("tasks: tier items", easy.items.length >= 5 && /^Clay \(or soft clay\)$/.test(easy.items[0]));
+		check("tasks: rewards and where to claim them",
+			easy.rewards[0].indexOf("antique lamp granting 1,000 experience") !== -1 && easy.rewards[1] === "Explorer's ring 2" &&
+			/Bob the smith/.test(easy.claim));
+		check("tasks: junk in, empty out", R.parseTaskSet("").tiers.length === 0 && R.parseTaskSet(null).tiers.length === 0 &&
+			R.parseTaskSet("<h2 id=\"Easy_achievements\">Easy</h2><p>no table</p>").tiers[0].tasks.length === 0);
+
+		var ttl = R.taskTitle("Seers' Village", "Easy");
+		check("tasks: title round trip", ttl === "tasks:Seers' Village:Easy" &&
+			R.parseTaskTitle(ttl).area === "Seers' Village" && R.parseTaskTitle(ttl).tier === "Easy" &&
+			R.parseTaskTitle("Cook's Assistant/Quick guide") === null);
+		check("tasks: display name", R.guideDisplayName(ttl) === "Seers' Village: Easy");
+		check("tasks: 14 areas, Lumbridge without Elite", R.TASK_AREAS.length === 14 &&
+			R.TASK_AREAS.filter(function (a) { return a.name === "Lumbridge"; })[0].tiers.join(",") === "Beginner,Easy,Medium,Hard");
+		tset.area = "Lumbridge";
+		var tg = R.tierGuide(tset, "Easy", R.taskTitle("Lumbridge", "Easy"));
+		check("tasks: tier as a guide", tg.name === "Lumbridge: Easy" && tg.sections.length === 1 &&
+			tg.sections[0].steps.length === 3 && tg.sections[0].steps[0].key === "a806" &&
+			tg.sections[0].steps[0].text.indexOf("Artisan Crafting: Create a clay ring") === 0 && tg.tasks.claim === easy.claim);
+		check("tasks: unknown tier gives no guide", R.tierGuide(tset, "Elite", "tasks:Lumbridge:Elite") === null);
+		check("tasks: steps keyed by achievement id, quests by position",
+			R.stepKey({ key: "a806", sectionIndex: 0, stepIndex: 0 }) === "a806" &&
+			R.stepKey({ sectionIndex: 2, stepIndex: 5 }) === "2:5");
+		var tprog = {};
+		tprog[R.taskTitle("Lumbridge", "Easy")] = { done: { a806: true, a815: true, a123456: true } };
+		var tc = R.tierCounts(easy, tprog, "Lumbridge");
+		check("tasks: counts only ticks on tasks that exist", tc.done === 2 && tc.total === 3 &&
+			tc.doneScore === 10 && tc.score === easy.tasks.reduce(function (s, t) { return s + t.score; }, 0));
+		check("tasks: nothing ticked yet", R.tierCounts(tierBy.Hard, {}, "Lumbridge").done === 0);
+
+		// Task progress rides in the same export code as quests.
+		var both = { "Cook's Assistant/Quick guide": { done: { "0:1": true }, items: {} } };
+		both[R.taskTitle("Lumbridge", "Easy")] = { done: { a806: true }, items: {} };
+		var round = R.decodeProgress(R.encodeProgress(both));
+		check("tasks: export code round trip", JSON.stringify(round) === JSON.stringify(both));
+		var mergedInto = { "Cook's Assistant/Quick guide": { done: { "0:0": true }, items: {} } };
+		var gained = R.mergeProgress(mergedInto, both);
+		check("tasks: merge adds the tier and keeps quest ticks", gained === 2 &&
+			mergedInto["tasks:Lumbridge:Easy"].done.a806 === true &&
+			mergedInto["Cook's Assistant/Quick guide"].done["0:0"] === true && mergedInto["Cook's Assistant/Quick guide"].done["0:1"] === true);
+		check("tasks: export wording counts tiers apart from quests",
+			R.describeProgressKeys(Object.keys(both)) === "1 quest and 1 task tier" &&
+			R.describeProgressKeys(["a/Quick guide", "b/Quick guide"]) === "2 quests" &&
+			R.describeProgressKeys(["tasks:Varrock:Hard"]) === "1 task tier" && R.describeProgressKeys([]) === "0 quests");
+
+		// Skill levels from the RuneMetrics profile colour the requirements.
+		var prof = JSON.stringify({ name: "x", skillvalues: [{ id: 14, level: 44, xp: 1 }, { id: 12, level: 3, xp: 1 }, { id: 3, level: 40, xp: 1 }] });
+		var lv = R.parseRmLevels(prof);
+		check("levels: skill ids mapped to names", lv && lv.Mining === 44 && lv.Crafting === 3 && lv.Constitution === 40);
+		check("levels: a proxy-wrapped payload still reads",
+			(R.parseRmLevels("Title: x\n\nMarkdown Content:\n" + prof) || {}).Mining === 44);
+		check("levels: private profile or junk gives null", R.parseRmLevels('{"error":"PROFILE_PRIVATE","loggedIn":"false"}') === null &&
+			R.parseRmLevels("<html>blocked</html>") === null && R.parseRmLevels("") === null);
+		var nnTitle = window.__rs3qh.normName("The Restless Ghost");
+		var sts = {};
+		sts[nnTitle] = "STARTED";
+		check("reqs: skill met, unmet, unknown without levels",
+			R.reqState({ skill: "Mining", level: 10 }, lv, null) === "met" &&
+			R.reqState({ skill: "Crafting", level: 4 }, lv, null) === "unmet" &&
+			R.reqState({ skill: "Mining", level: 10 }, null, null) === "unknown" &&
+			R.reqState({ skill: "Necromancy", level: 1 }, lv, null) === "unknown");
+		check("reqs: a started quest is enough for '(partial)', not for a full requirement",
+			R.reqState({ quest: "The Restless Ghost", text: "The Restless Ghost (partial)" }, null, sts) === "met" &&
+			R.reqState({ quest: "The Restless Ghost", text: "The Restless Ghost" }, null, sts) === "unmet" &&
+			R.reqState({ quest: "Unknown Quest", text: "Unknown Quest" }, null, sts) === "unknown" &&
+			R.reqState({ text: "Mogre lore activity" }, lv, sts) === "unknown");
+		var profCombat = JSON.stringify({ combatlevel: 42, skillvalues: [{ id: 14, level: 44 }] });
+		check("levels: combat level from the profile, for '30 combat level'",
+			R.parseRmLevels(profCombat)["combat level"] === 42 &&
+			R.reqState({ skill: "combat level", level: 30 }, R.parseRmLevels(profCombat), null) === "met");
+		var qpPayload = JSON.stringify({ quests: [
+			{ title: "A", status: "COMPLETED", questPoints: 3, userEligible: true },
+			{ title: "B", status: "STARTED", questPoints: 5, userEligible: true },
+			{ title: "C", status: "COMPLETED", questPoints: 2, userEligible: true }] });
+		check("levels: quest points summed from completed quests", window.__rs3qh.parseRmPayload(qpPayload).questPoints === 5 &&
+			R.reqState({ skill: "quest points", level: 33 }, { "quest points": 5 }, null) === "unmet");
+		check("tasks: coins icons and nested lists read as text", (function () {
+			var html = '<h2 id="Easy_achievements">Easy</h2><table class="achievementsdetails"><tbody><tr><th>Items required</th><td><ul>' +
+				'<li><span class="coins inventory-image">105</span></li><li>Varrock Teleport runes:<ul><li>3 air runes</li><li>1 law rune</li></ul></li>' +
+				'</ul></td></tr></tbody></table>';
+			var items = R.parseTaskSet(html).tiers[0].items;
+			return items.join("|") === "105 coins|Varrock Teleport runes: 3 air runes, 1 law rune";
+		})());
+		check("reqs: labels", R.reqLabel({ skill: "Mining", level: 10 }) === "10 Mining" &&
+			R.reqLabel({ skill: "Agility", level: 50, boostable: true }) === "50 Agility [B]" &&
+			R.reqLabel({ quest: "X", text: "X (partial)" }) === "X (partial)");
+
+		// Live: the real Lumbridge page through the app's own fetch.
+		R.fetchTaskSet("Lumbridge", true, function (set) {
+			var e = set.tiers.filter(function (t) { return t.name === "Easy"; })[0];
+			var ok = set.tiers.length === 4 && e && e.tasks.length >= 15 && e.tasks.every(function (t) { return t.id && t.name; });
+			document.getElementById("results").textContent +=
+				"\nLIVE tasks " + (ok ? "OK: Lumbridge " + set.tiers.map(function (t) { return t.name + " " + t.tasks.length; }).join(", ")
+					: "FAILED: " + JSON.stringify(set.tiers.map(function (t) { return [t.name, t.tasks.length]; })));
+		}, function (msg) {
+			document.getElementById("results").textContent += "\nLIVE tasks skipped (wiki unreachable): " + msg;
+		});
 
 		} catch (e) {
 			out.push("FAIL suite crashed: " + (e && e.stack ? e.stack : e));

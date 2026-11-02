@@ -21,6 +21,17 @@ platform (no memory reading, no injection).
   the RS3 world map (mejrs.github.io) **embedded inside the app**, centred on
   that exact spot with the right floor/plane and layer (e.g. Zanaris)
 - Guides are cached locally (last 50) so revisiting a quest is instant
+- **Area tasks** (the achievement diaries): an **Area tasks** tab next to
+  the quest list with all 13 areas plus New Varrock, each split into its
+  tiers (Beginner for Lumbridge, then Easy, Medium, Hard, Elite) with your
+  done / total per tier. Open a tier and every task is a step you can tick:
+  the task, what it needs, the wiki's notes and a link to its page, with
+  the tier's own requirements, items and rewards above. Sync your name and
+  the requirements turn green or red against your levels, combat level,
+  quest points and quests. Search covers task names once an area is
+  loaded (**Load all** fetches every area). Task ticks travel in the same
+  progress code as quests. Overlay works for tasks too; Assist and Auto
+  stay quest-only, since tasks have no dialogue to read.
 - **Assist mode** (Alt1 only, needs pixel + overlay permissions): captures
   the game screen ~1.5×/second and
   - **highlights the dialogue option to click** — when the current step has
@@ -58,7 +69,8 @@ Accept the **overlay** permission when prompted so the on-screen step display
 works. The app also runs in a normal browser for testing (overlay disabled).
 
 Deep links are supported: `index.html?quest=Dragon+Slayer` opens a quest
-directly.
+directly, and `index.html?tasks=Lumbridge/Easy` a task tier
+(`?tasks=Lumbridge` just opens the Area tasks tab).
 
 ## How the wiki parsing works
 
@@ -68,6 +80,12 @@ locations). `app.js` resolves these client-side via the wiki's CORS-enabled
 API (`api.php?action=parse&prop=wikitext&origin=*`). Unknown templates are
 dropped and links flattened to text, so the parser degrades gracefully on
 unusual guides — and every guide links back to the full wiki page.
+
+Area tasks come from each area's set page (`Lumbridge achievements` and so
+on). The wiki builds those task tables from its own database, so the
+wikitext has no rows: the app asks for the rendered page instead
+(`action=parse&prop=text`) and reads the tables per tier heading. Parsed
+sets are cached for 7 days; the ↻ button on an area reloads it.
 
 ## Bonus addon: Tile Marker
 
@@ -98,6 +116,7 @@ grid the way renderer-hooking clients (Bolt/RuneLite-style) can.
 | `app.js`         | Wiki fetching, wikitext parser, progress, overlay, assist |
 | `libs/`          | Vendored [alt1](https://github.com/skillbert/alt1) UMD bundles by Skillbert (base, ocr, dialog, chatbox) |
 | `test.html`      | Self-tests (open `/test.html` to run)            |
+| `test-tasks-fixture.js` | Trimmed copy of a real area-task wiki page, for the task parser tests |
 | `icon.png`       | Taskbar/app icon                                 |
 
 ## Credits

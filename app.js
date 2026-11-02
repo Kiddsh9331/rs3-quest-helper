@@ -21,6 +21,9 @@
 	var RM_URL = "https://apps.runescape.com/runemetrics/quests?user=";
 	var RM_CACHE_KEY = "rs3qh-rm-v2";
 	var RM_TTL_MS = 30 * 60 * 1000;
+	// Skill levels, for area task requirements: same account, same proxies.
+	var RM_PROFILE_URL = "https://apps.runescape.com/runemetrics/profile/profile?activities=0&user=";
+	var RM_LEVELS_KEY = "rs3qh-rmlevels-v1";
 	var ORDER_CACHE_KEY = "rs3qh-order-v1";
 	var ORDER_TTL_MS = 7 * 24 * 3600 * 1000;
 	var TIMELINE_CACHE_KEY = "rs3qh-timeline-v2";
@@ -36,6 +39,8 @@
 	var prefs = load(PREFS_KEY, { rsn: "", hideDone: false, sort: "az" });
 	var rmStatuses = null;  // { normalised quest name: "COMPLETED" | "STARTED" | "NOT_STARTED" }
 	var rmEligible = null;  // { normalised quest name: true when requirements are met }
+	var rmLevels = null;    // { "Mining": 44, ... } from the RuneMetrics profile, for task requirements
+	var rmQuestPoints = null; // summed from the synced quests, for "33 quest points"
 	var optimalRank = null; // { normalised quest name: position in progression guide }
 	var timelineRank = null; // { normalised quest name: position in the timeline list }
 	var currentQuestTitle = null; // wiki title of the open guide, for reloads
@@ -111,6 +116,16 @@
 			if (touched) changed++;
 		});
 		return changed;
+	}
+
+	// "3 quests and 2 task tiers" for a list of progress keys.
+	function describeProgressKeys(keys) {
+		var tiers = keys.filter(function (k) { return k.indexOf("tasks:") === 0; }).length;
+		var quests = keys.length - tiers;
+		var parts = [];
+		if (quests || !tiers) parts.push(quests + " quest" + (quests === 1 ? "" : "s"));
+		if (tiers) parts.push(tiers + " task tier" + (tiers === 1 ? "" : "s"));
+		return parts.join(" and ");
 	}
 
 	function itemChecked(name) {
@@ -229,6 +244,15 @@
 	}
 
 	function fetchGuide(title, cb, errcb) {
+		var tt = parseTaskTitle(title);
+		if (tt) {
+			fetchTaskSet(tt.area, false, function (set) {
+				var g = tierGuide(set, tt.tier, title);
+				if (g) cb(g);
+				else errcb("The wiki has no " + tt.tier + " tier for " + tt.area + " tasks.");
+			}, errcb);
+			return;
+		}
 		var cache = load(GUIDE_CACHE_KEY, {});
 		var hit = cache[title];
 		if (hit && Date.now() - hit.ts < GUIDE_TTL_MS) {
@@ -293,22 +317,27 @@
 			}
 		}
 		if (!data || !data.quests || !data.quests.length) return null;
-		var statuses = {}, eligible = {};
+		var statuses = {}, eligible = {}, questPoints = 0;
 		data.quests.forEach(function (q) {
 			var key = normName(q.title);
 			statuses[key] = q.status;
 			// userEligible is Jagex's own "meets the requirements" flag, so
 			// eligibility never has to be guessed from skill/quest reqs.
 			eligible[key] = q.userEligible === true;
+			// Quest points, for "33 quest points" on area tasks.
+			if (q.status === "COMPLETED" && typeof q.questPoints === "number") questPoints += q.questPoints;
 		});
-		return { statuses: statuses, eligible: eligible };
+		return { statuses: statuses, eligible: eligible, questPoints: questPoints };
 	}
 
 	// RuneMetrics sends no CORS headers, so a direct request only works in
 	// permissive environments. Fall back through public CORS proxies; the
 	// only thing sent is the (public) player name.
 	function rmUrls(name) {
-		var direct = RM_URL + encodeURIComponent(name);
+		return proxyUrls(RM_URL + encodeURIComponent(name));
+	}
+
+	function proxyUrls(direct) {
 		return [
 			direct,
 			"https://corsproxy.io/?url=" + encodeURIComponent(direct),
@@ -321,7 +350,7 @@
 	function fetchRuneMetrics(name, force, cb, errcb) {
 		var cached = load(RM_CACHE_KEY, null);
 		if (!force && cached && cached.name === name && Date.now() - cached.ts < RM_TTL_MS) {
-			cb({ statuses: cached.statuses, eligible: cached.eligible || null });
+			cb({ statuses: cached.statuses, eligible: cached.eligible || null, questPoints: cached.questPoints });
 			return;
 		}
 		var urls = rmUrls(name);
@@ -337,7 +366,7 @@
 				var parsed = parseRmPayload(xhr.responseText);
 				if (parsed) {
 					store(RM_CACHE_KEY, { ts: Date.now(), name: name,
-						statuses: parsed.statuses, eligible: parsed.eligible });
+						statuses: parsed.statuses, eligible: parsed.eligible, questPoints: parsed.questPoints });
 					cb(parsed);
 				} else if (i === 0 && xhr.status === 200) {
 					// Direct request answered but without quests: private profile.
@@ -350,6 +379,91 @@
 			xhr.ontimeout = function () { attempt(i + 1); };
 			xhr.send();
 		})(0);
+	}
+
+	// RuneMetrics skill ids, in order (skillvalues[].id).
+	var RM_SKILL_NAMES = ["Attack", "Defence", "Strength", "Constitution", "Ranged", "Prayer", "Magic", "Cooking",
+		"Woodcutting", "Fletching", "Fishing", "Firemaking", "Crafting", "Smithing", "Mining", "Herblore", "Agility",
+		"Thieving", "Slayer", "Farming", "Runecrafting", "Hunter", "Construction", "Summoning", "Dungeoneering",
+		"Divination", "Invention", "Archaeology", "Necromancy"];
+
+	// A RuneMetrics profile payload -> { "Mining": 44, ... }, or null when it
+	// has no skills (a private profile answers {"error":"PROFILE_PRIVATE"}).
+	// Proxies that wrap the payload are handled like the quests payload.
+	function parseRmLevels(text) {
+		var data = null;
+		try {
+			data = JSON.parse(text);
+		} catch (e) {
+			var s = String(text || "").indexOf('"skillvalues"');
+			if (s === -1) return null;
+			var a = text.indexOf("[", s), depth = 0, end = -1;
+			for (var i = a; a !== -1 && i < text.length; i++) {
+				if (text[i] === "[") depth++;
+				else if (text[i] === "]" && --depth === 0) { end = i + 1; break; }
+			}
+			if (end === -1) return null;
+			try {
+				data = { skillvalues: JSON.parse(text.slice(a, end)) };
+			} catch (e2) {
+				return null;
+			}
+		}
+		if (!data || !Array.isArray(data.skillvalues)) return null;
+		var levels = {}, any = false;
+		data.skillvalues.forEach(function (sv) {
+			var skill = sv && RM_SKILL_NAMES[sv.id];
+			if (skill && typeof sv.level === "number") { levels[skill] = sv.level; any = true; }
+		});
+		// The wiki lists "30 combat level" with the skills.
+		var combat = typeof data.combatlevel === "number" ? data.combatlevel
+			: +((/"combatlevel"\s*:\s*(\d+)/.exec(String(text)) || [])[1] || 0);
+		if (any && combat) levels["combat level"] = combat;
+		return any ? levels : null;
+	}
+
+	function fetchRmLevels(name, force, cb, errcb) {
+		var cached = load(RM_LEVELS_KEY, null);
+		if (!force && cached && cached.name === name && Date.now() - cached.ts < RM_TTL_MS) {
+			cb(cached.levels);
+			return;
+		}
+		var urls = proxyUrls(RM_PROFILE_URL + encodeURIComponent(name));
+		(function attempt(i) {
+			if (i >= urls.length) {
+				errcb("Could not read skill levels from RuneMetrics.");
+				return;
+			}
+			var xhr = new XMLHttpRequest();
+			xhr.open("GET", urls[i]);
+			xhr.timeout = 10000;
+			xhr.onload = function () {
+				var levels = parseRmLevels(xhr.responseText);
+				if (levels) {
+					store(RM_LEVELS_KEY, { ts: Date.now(), name: name, levels: levels });
+					cb(levels);
+				} else if (i === 0 && xhr.status === 200) {
+					errcb("RuneMetrics returned no skills (private profile?).");
+				} else {
+					attempt(i + 1);
+				}
+			};
+			xhr.onerror = function () { attempt(i + 1); };
+			xhr.ontimeout = function () { attempt(i + 1); };
+			xhr.send();
+		})(0);
+	}
+
+	// Best-effort, after a successful quest sync: colours task requirements.
+	// A failure leaves the chips grey and says nothing.
+	function syncRmLevels(name, force) {
+		fetchRmLevels(name, force, function (levels) {
+			rmLevels = levels;
+			if (guide && guide.tasks) {
+				renderSteps();
+				renderTaskDetails();
+			}
+		}, function () { /* quiet */ });
 	}
 
 	function fetchOptimalOrder(cb, errcb) {
@@ -1194,7 +1308,326 @@
 	}
 
 	function guideDisplayName(title) {
+		var tt = parseTaskTitle(title);
+		if (tt) return tt.area + ": " + tt.tier;
 		return title === PATHWAY_TITLE ? "Efficient Ironman Pathway" : title.replace(/\/Quick guide$/, "");
+	}
+
+	// ---------- area tasks (achievement diaries) ----------
+	// Each area's set page ("Lumbridge achievements") has one <h2> per tier
+	// (Beginner/Easy/Medium/Hard/Elite) followed by a Requirements table, the
+	// tier's task table and its Rewards. The tables are built on the wiki from
+	// its achievement database, so the wikitext has no rows: parse the
+	// rendered HTML instead. A tier opens in the guide view as a checklist,
+	// under the progress key "tasks:<area>:<tier>", with each task keyed by
+	// its achievement id so a reordered table keeps the ticks.
+
+	var TASKS_CACHE_KEY = "rs3qh-tasks-v1";
+	var TASKS_TTL_MS = 7 * 24 * 3600 * 1000;
+	var TASK_PREFIX = "tasks:";
+	var TASK_TIERS = ["Beginner", "Easy", "Medium", "Hard", "Elite"];
+	var STANDARD_TIERS = ["Easy", "Medium", "Hard", "Elite"];
+	// New Varrock is the Dimension of Disaster version of the Varrock set:
+	// same layout, its own page, listed last.
+	var TASK_AREAS = [
+		{ name: "Ardougne", tiers: STANDARD_TIERS },
+		{ name: "Daemonheim", tiers: STANDARD_TIERS },
+		{ name: "Desert", tiers: STANDARD_TIERS },
+		{ name: "Falador", tiers: STANDARD_TIERS },
+		{ name: "Fremennik", tiers: STANDARD_TIERS },
+		{ name: "Karamja", tiers: STANDARD_TIERS },
+		{ name: "Lumbridge", tiers: ["Beginner", "Easy", "Medium", "Hard"] },
+		{ name: "Morytania", tiers: STANDARD_TIERS },
+		{ name: "Seers' Village", tiers: STANDARD_TIERS },
+		{ name: "Tirannwn", tiers: STANDARD_TIERS },
+		{ name: "Underworld", tiers: STANDARD_TIERS },
+		{ name: "Varrock", tiers: STANDARD_TIERS },
+		{ name: "Wilderness", tiers: STANDARD_TIERS },
+		{ name: "New Varrock", tiers: STANDARD_TIERS }
+	];
+
+	function taskTitle(area, tier) {
+		return TASK_PREFIX + area + ":" + tier;
+	}
+
+	// "tasks:Seers' Village:Easy" -> { area: "Seers' Village", tier: "Easy" }.
+	function parseTaskTitle(title) {
+		var m = /^tasks:(.+):([^:]+)$/.exec(String(title || ""));
+		return m ? { area: m[1], tier: m[2] } : null;
+	}
+
+	function taskAreaPage(area) {
+		return area + " achievements";
+	}
+
+	function cleanText(s) {
+		return String(s || "").replace(/ /g, " ").replace(/\s+/g, " ").trim();
+	}
+
+	// Text of a page node as read aloud: a coins icon with "105" is "105
+	// coins", and a nested list folds into its line ("Varrock Teleport
+	// runes: 3 air runes, 1 fire rune, 1 law rune").
+	function nodeText(node) {
+		var copy = node.cloneNode(true);
+		Array.prototype.forEach.call(copy.querySelectorAll(".coins"), function (c) {
+			var n = cleanText(c.textContent);
+			if (/^[\d,]+$/.test(n)) c.textContent = n + " coins";
+		});
+		var nested = [];
+		Array.prototype.forEach.call(copy.querySelectorAll(":scope > ul, :scope > ol"), function (list) {
+			Array.prototype.forEach.call(list.children, function (li) {
+				var t = cleanText(li.textContent);
+				if (t) nested.push(t);
+			});
+			list.remove();
+		});
+		var own = cleanText(copy.textContent);
+		if (!nested.length) return own;
+		return own ? own.replace(/:$/, "") + ": " + nested.join(", ") : nested.join(", ");
+	}
+
+	// One requirement <li>: a skill ({ skill, level }), a quest ({ quest,
+	// text: "The Restless Ghost (partial)" }) or anything else ({ text }).
+	// "None" yields null.
+	function parseTaskReq(li) {
+		var text = nodeText(li);
+		if (!text || /^none$/i.test(text)) return null;
+		var sk = li.querySelector(".skillreq");
+		if (sk && sk.getAttribute("data-skill")) {
+			var req = { skill: sk.getAttribute("data-skill"), level: parseInt(sk.getAttribute("data-level"), 10) || 0 };
+			if (/\[B\]/.test(text)) req.boostable = true;
+			return req;
+		}
+		var q = li.querySelector(".achievement-req-quest");
+		if (q && q.getAttribute("data-quest")) return { quest: q.getAttribute("data-quest"), text: text };
+		// The tier's own list links a quest as a plain link with its state
+		// after it: "The Restless Ghost (partial)".
+		var a = li.querySelector(":scope > a[title]");
+		if (a && /\((partial|started|complete|completed)\)\s*$/i.test(text)) {
+			return { quest: a.getAttribute("title"), text: text };
+		}
+		return { text: text };
+	}
+
+	// The <li>s of a cell's own lists, not of tables nested in it (the
+	// ironman-only requirements sit in a collapsed table inside the cell).
+	function ownListItems(node) {
+		var out = [];
+		Array.prototype.forEach.call(node.children, function (child) {
+			if (child.tagName === "UL") {
+				Array.prototype.forEach.call(child.children, function (li) {
+					if (li.tagName === "LI") out.push(li);
+				});
+			} else if (child.tagName === "DIV") {
+				out = out.concat(ownListItems(child));
+			}
+		});
+		return out;
+	}
+
+	function parseTaskRow(row) {
+		var cells = row.cells;
+		if (!cells || cells.length < 7) return null;
+		var id = parseInt(row.getAttribute("data-rowid"), 10);
+		var link = cells[1].querySelector("a");
+		var name = cleanText(cells[1].textContent);
+		if (!id || !name) return null;
+		var reqs = [];
+		ownListItems(cells[4]).forEach(function (li) {
+			var r = parseTaskReq(li);
+			if (r) reqs.push(r);
+		});
+		// Members tasks link "Members" with a P2P icon; free ones "Free-to-play".
+		var membersLink = cells[3].querySelector("a");
+		var membersRef = membersLink ? (membersLink.getAttribute("href") || "") + " " + (membersLink.getAttribute("title") || "") : "";
+		return {
+			id: id,
+			name: name,
+			page: link ? (link.getAttribute("title") || name) : name,
+			description: nodeText(cells[2]),
+			members: /\bmembers\b/i.test(membersRef) || /P2P_icon/i.test(cells[3].innerHTML),
+			reqs: reqs,
+			notes: nodeText(cells[5]),
+			score: parseInt(cleanText(cells[6].textContent), 10) || 0
+		};
+	}
+
+	// Elements after a tier's heading, up to the next <h2>.
+	function tierSegment(h2) {
+		var start = h2.parentNode && h2.parentNode.classList && h2.parentNode.classList.contains("mw-heading")
+			? h2.parentNode : h2;
+		var nodes = [];
+		for (var n = start.nextElementSibling; n; n = n.nextElementSibling) {
+			if (n.tagName === "H2" || (n.classList && n.classList.contains("mw-heading2")) ||
+				(n.querySelector && n.querySelector(":scope > h2"))) break;
+			nodes.push(n);
+		}
+		return nodes;
+	}
+
+	function findIn(nodes, selector) {
+		for (var i = 0; i < nodes.length; i++) {
+			if (nodes[i].matches && nodes[i].matches(selector)) return nodes[i];
+			var inner = nodes[i].querySelector && nodes[i].querySelector(selector);
+			if (inner) return inner;
+		}
+		return null;
+	}
+
+	// Pure: rendered set-page HTML -> { tiers: [{ name, tasks, requirements,
+	// items, rewards, claim }] }. Never throws; an odd page gives fewer tiers.
+	function parseTaskSet(html) {
+		var out = { tiers: [] };
+		var doc;
+		try {
+			doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+		} catch (e) {
+			return out;
+		}
+		Array.prototype.forEach.call(doc.querySelectorAll("h2[id]"), function (h2) {
+			var m = /^(Beginner|Easy|Medium|Hard|Elite)_achievements$/.exec(h2.id);
+			if (!m) return;
+			var tier = { name: m[1], tasks: [], requirements: [], items: [], rewards: [], claim: "" };
+			try {
+				var nodes = tierSegment(h2);
+				var details = findIn(nodes, "table.achievementsdetails");
+				if (details) {
+					Array.prototype.forEach.call(details.rows, function (tr) {
+						var th = tr.querySelector("th"), td = tr.querySelector("td");
+						if (!th || !td) return;
+						var label = cleanText(th.textContent).toLowerCase();
+						var lis = Array.prototype.slice.call(td.querySelectorAll("li"));
+						if (label.indexOf("requirement") === 0) {
+							lis.forEach(function (li) {
+								var r = parseTaskReq(li);
+								if (r) tier.requirements.push(r);
+							});
+						} else if (label.indexOf("item") === 0) {
+							// Top-level lines; sub-lists fold into them.
+							lis.forEach(function (li) {
+								if (li.parentNode && li.parentNode.closest && li.parentNode.closest("li")) return;
+								var t = nodeText(li);
+								if (t) tier.items.push(t);
+							});
+						}
+					});
+				}
+				var table = findIn(nodes, 'table[data-tableid="Achievements list"]');
+				if (table && table.tBodies[0]) {
+					Array.prototype.forEach.call(table.tBodies[0].rows, function (row) {
+						if (!row.hasAttribute("data-rowid")) return;
+						var task = parseTaskRow(row);
+						// "New Varrock Set Tasks - Easy" is awarded for the other
+						// rows, not done on its own.
+						if (task && !/\bSet Tasks\s*-\s*\w+$/i.test(task.name)) tier.tasks.push(task);
+					});
+				}
+				// Rewards: the first paragraph and list after the "Rewards" heading.
+				var afterRewards = false;
+				for (var i = 0; i < nodes.length; i++) {
+					var n = nodes[i];
+					var heading = n.matches("h3") ? n : n.querySelector(":scope > h3");
+					if (heading) {
+						if (afterRewards) break;
+						afterRewards = /^Rewards/.test(heading.id || "");
+						continue;
+					}
+					if (!afterRewards) continue;
+					if (n.tagName === "P" && !tier.claim) tier.claim = cleanText(n.textContent);
+					if (n.tagName === "UL" && !tier.rewards.length) {
+						Array.prototype.forEach.call(n.children, function (li) {
+							// "Explorer's ring 2, which ... grants the following
+							// bonuses:" introduces a table this view doesn't show.
+							var t = cleanText(li.textContent).replace(/,\s*which\b.*:$/, "").replace(/:$/, "");
+							if (t) tier.rewards.push(t);
+						});
+					}
+				}
+			} catch (e) { /* keep what was read */ }
+			out.tiers.push(tier);
+		});
+		return out;
+	}
+
+	// Done / total for one tier, counting only ticks on tasks that exist.
+	function tierCounts(tier, progressObj, area) {
+		var p = (progressObj || {})[taskTitle(area, tier.name)];
+		var done = 0, score = 0, doneScore = 0;
+		tier.tasks.forEach(function (t) {
+			score += t.score;
+			if (p && p.done && p.done["a" + t.id]) { done++; doneScore += t.score; }
+		});
+		return { done: done, total: tier.tasks.length, score: score, doneScore: doneScore };
+	}
+
+	// Parsed sets live in their own cache (the HTML is 200 KB+ per area, the
+	// parsed set a fraction of that). A stale copy beats an error.
+	function cachedTaskSet(area) {
+		var hit = load(TASKS_CACHE_KEY, {})[area];
+		return hit ? hit.data : null;
+	}
+
+	function fetchTaskSet(area, force, cb, errcb) {
+		var cache = load(TASKS_CACHE_KEY, {});
+		var hit = cache[area];
+		if (!force && hit && Date.now() - hit.ts < TASKS_TTL_MS) {
+			cb(hit.data);
+			return;
+		}
+		wikiGet({ action: "parse", page: taskAreaPage(area), prop: "text" }, function (data) {
+			var html = data && data.parse && data.parse.text && data.parse.text["*"];
+			var set = html ? parseTaskSet(html) : { tiers: [] };
+			set.area = area;
+			if (!set.tiers.length || !set.tiers.some(function (t) { return t.tasks.length; })) {
+				if (hit) { cb(hit.data); return; }
+				errcb("The wiki page for " + area + " tasks had no task tables.");
+				return;
+			}
+			cache = load(TASKS_CACHE_KEY, {});
+			cache[area] = { ts: Date.now(), data: set };
+			store(TASKS_CACHE_KEY, cache);
+			cb(set);
+		}, function (msg) {
+			if (hit) cb(hit.data);
+			else errcb(msg);
+		});
+	}
+
+	// A tier as a guide the guide view can show: one section, one step per
+	// task. `text` is what the overlay card shows.
+	function tierGuide(set, tierName, title) {
+		var tier = null;
+		(set.tiers || []).forEach(function (t) { if (t.name === tierName) tier = t; });
+		if (!tier) return null;
+		return {
+			title: title,
+			name: guideDisplayName(title),
+			tasks: {
+				area: set.area,
+				tier: tier.name,
+				requirements: tier.requirements,
+				items: tier.items,
+				rewards: tier.rewards,
+				claim: tier.claim
+			},
+			sections: [{
+				title: tier.name + " " + set.area + " tasks",
+				needed: [],
+				images: [],
+				steps: tier.tasks.map(function (t) {
+					return {
+						key: "a" + t.id,
+						text: t.name + ": " + t.description,
+						chat: null,
+						maps: [],
+						images: [],
+						links: [],
+						sub: [],
+						task: t
+					};
+				})
+			}]
+		};
 	}
 
 	// Extract the {{Quest details}} items/recommended lists from a quest's
@@ -2248,7 +2681,7 @@
 			store(PROGRESS_KEY, progress);
 			renderSteps();
 			if (overlayTimer) paintOverlay();
-			setAssistStatus("Quest completion detected in chat — all steps marked done.");
+			if (!guide.tasks) setAssistStatus("Quest completion detected in chat — all steps marked done.");
 		}
 	}
 
@@ -2279,7 +2712,8 @@
 					var getStep = autoAdvance ? currentStep() : null;
 					if (getStep && getStep.chat) getStep = null;
 					for (var i = 0; i < lines.length; i++) {
-						if (/congratulations.*(complete|finish)|quest complete/i.test(lines[i].text)) {
+						// "Quest complete" in chat says nothing about an area task tier.
+						if (/congratulations.*(complete|finish)|quest complete/i.test(lines[i].text) && guide && !guide.tasks) {
 							markQuestComplete();
 						}
 						var got = getStep && chatGotItem(getStep, lines[i].text);
@@ -2978,8 +3412,10 @@
 
 	// ---------- step logic ----------
 
+	// Quest steps are keyed by position; area tasks by achievement id ("a806"),
+	// so a reordered or extended wiki table keeps the ticks on the right task.
 	function stepKey(step) {
-		return step.sectionIndex + ":" + step.stepIndex;
+		return step.key || (step.sectionIndex + ":" + step.stepIndex);
 	}
 
 	function subKey(step, k) {
@@ -3038,7 +3474,8 @@
 	function maybeFinishQuest() {
 		if (finishingQuest || !guide || !allStepsDone()) return;
 		finishingQuest = true;
-		setStatus("guide-status", "🎉 " + guide.name + " complete! Returning to the quest list…");
+		setStatus("guide-status", "🎉 " + guide.name + " complete! Returning to the " +
+			(guide.tasks ? "task" : "quest") + " list…");
 		setTimeout(function () {
 			finishingQuest = false;
 			if (allStepsDone()) goHome();
@@ -3327,15 +3764,317 @@
 		}
 	}
 
+	// ---------- task requirements ----------
+
+	// "met", "unmet" or "unknown" for one requirement, from RuneMetrics
+	// levels and quest statuses when they've been synced. Pure given its
+	// inputs, so the tests pass their own.
+	function reqState(req, levels, statuses) {
+		if (req.skill) {
+			if (!levels || typeof levels[req.skill] !== "number") return "unknown";
+			return levels[req.skill] >= req.level ? "met" : "unmet";
+		}
+		if (req.quest) {
+			if (!statuses) return "unknown";
+			var st = statuses[normName(req.quest)];
+			if (!st) return "unknown";
+			if (st === "COMPLETED") return "met";
+			// "(partial)" / "(started)": being part-way through is enough.
+			if (st === "STARTED" && /\((partial|started)\)/i.test(req.text || "")) return "met";
+			return "unmet";
+		}
+		return "unknown";
+	}
+
+	function reqLabel(req) {
+		if (req.skill) return req.level + " " + req.skill + (req.boostable ? " [B]" : "");
+		return req.text || req.quest || "";
+	}
+
+	// Everything a requirement chip can be checked against: skill levels and
+	// combat level from the profile, quest points from the quest sync.
+	function taskLevels() {
+		if (!rmLevels && rmQuestPoints === null) return null;
+		var levels = {};
+		Object.keys(rmLevels || {}).forEach(function (k) { levels[k] = rmLevels[k]; });
+		if (rmQuestPoints !== null) levels["quest points"] = rmQuestPoints;
+		return levels;
+	}
+
+	function reqChip(req) {
+		var levels = taskLevels();
+		var state = reqState(req, levels, rmStatuses);
+		var chip = el("span", "req-chip" + (state === "unknown" ? "" : " " + state), reqLabel(req));
+		if (req.skill && levels && typeof levels[req.skill] === "number") {
+			chip.title = "Yours: " + levels[req.skill];
+		} else if (state === "unknown") {
+			chip.title = req.skill || req.quest
+				? "Sync your RuneScape name on the home screen to check this against your account"
+				: "Not something RuneMetrics reports; check it yourself";
+		}
+		return chip;
+	}
+
+	// The body of a task step: name, members and RuneScore badges, a wiki
+	// link, the task, its requirements and the wiki's notes.
+	function appendTaskBody(body, t) {
+		var head = el("div", "task-head");
+		head.appendChild(el("span", "task-name", t.name));
+		head.appendChild(el("span", "task-badge" + (t.members ? " members" : ""), t.members ? "Members" : "F2P"));
+		if (t.score) {
+			var score = el("span", "task-badge", t.score + " RS");
+			score.title = "RuneScore";
+			head.appendChild(score);
+		}
+		var wiki = el("a", "task-wiki", "wiki");
+		wiki.href = "https://runescape.wiki/w/" + encodeURIComponent(t.page.replace(/ /g, "_"));
+		wiki.target = "_blank";
+		wiki.title = "Open " + t.name + " on the wiki";
+		wiki.addEventListener("click", function (e) { e.stopPropagation(); });
+		head.appendChild(wiki);
+		body.appendChild(head);
+		body.appendChild(el("span", "task-desc", t.description));
+		if (t.reqs.length) {
+			var reqs = el("div", "task-reqs");
+			t.reqs.forEach(function (r) { reqs.appendChild(reqChip(r)); });
+			body.appendChild(reqs);
+		}
+		if (t.notes) body.appendChild(el("span", "step-note", t.notes));
+	}
+
+	// The overview for a tier: its requirements (coloured like the tasks')
+	// in the first details panel, the rewards and where to claim them in
+	// the second.
+	function renderTaskDetails() {
+		var info = guide.tasks;
+		document.getElementById("details-items-title").textContent = "Requirements for the tier";
+		document.getElementById("details-rec-title").textContent = "Rewards";
+		var reqUl = document.getElementById("details-items");
+		var recUl = document.getElementById("details-rec");
+		reqUl.innerHTML = "";
+		recUl.innerHTML = "";
+		if (info.requirements.length) {
+			var li = el("li", "task-reqs-block");
+			var reqs = el("div", "task-reqs");
+			info.requirements.forEach(function (r) { reqs.appendChild(reqChip(r)); });
+			li.appendChild(reqs);
+			reqUl.appendChild(li);
+		}
+		info.rewards.forEach(function (r) { recUl.appendChild(el("li", null, r)); });
+		if (info.claim) recUl.appendChild(el("li", "task-claim", info.claim));
+		show("details-items-panel", info.requirements.length > 0);
+		show("details-rec-panel", info.rewards.length > 0 || !!info.claim);
+		overviewButtonLabel();
+	}
+
+	// Assist and Auto read dialogue, which tasks don't have.
+	function setQuestOnlyControls(isQuest) {
+		["btn-assist", "btn-auto"].forEach(function (id) {
+			var b = document.getElementById(id);
+			if (b) b.classList.toggle("hidden", !isQuest);
+		});
+		if (!isQuest && assistTimer) setAssist(false);
+	}
+
+	// ---------- home tabs: quests / area tasks ----------
+
+	var taskLoads = {}; // area -> "loading" | error message, while fetching
+	var TASK_MATCHES_MAX = 8;
+
+	function homeTab() {
+		return prefs.homeTab === "tasks" ? "tasks" : "quests";
+	}
+
+	function renderHome() {
+		if (homeTab() === "tasks") renderTasks();
+		// Before the quest index arrives the list would only say it's empty;
+		// the index callback renders it.
+		else if (questIndex.length) renderList();
+	}
+
+	function applyHomeTab() {
+		var tasks = homeTab() === "tasks";
+		var tq = document.getElementById("tab-quests"), tt = document.getElementById("tab-tasks");
+		if (!tq || !tt) return;
+		tq.classList.toggle("active", !tasks);
+		tt.classList.toggle("active", tasks);
+		tq.setAttribute("aria-selected", String(!tasks));
+		tt.setAttribute("aria-selected", String(tasks));
+		show("quest-list", !tasks);
+		show("task-list", tasks);
+		// Quest-only list tools; RuneMetrics sync stays (it colours task requirements).
+		show("eligible-only-label", !tasks);
+		show("sort-mode", !tasks);
+		document.getElementById("search").placeholder = tasks ? "Search area tasks…" : "Search quests…";
+		updateTaskTabLabel();
+		renderHome();
+	}
+
+	function setHomeTab(tab) {
+		prefs.homeTab = tab;
+		store(PREFS_KEY, prefs);
+		applyHomeTab();
+	}
+
+	// Done / total over every loaded area, for the tab label.
+	function taskTotals() {
+		var done = 0, total = 0;
+		TASK_AREAS.forEach(function (area) {
+			var set = cachedTaskSet(area.name);
+			if (!set) return;
+			set.tiers.forEach(function (t) {
+				var c = tierCounts(t, progress, area.name);
+				done += c.done;
+				total += c.total;
+			});
+		});
+		return { done: done, total: total };
+	}
+
+	function updateTaskTabLabel() {
+		var tab = document.getElementById("tab-tasks");
+		if (!tab) return;
+		var t = taskTotals();
+		tab.textContent = "Area tasks" + (t.total ? " " + t.done + " / " + t.total.toLocaleString("en-GB") : "");
+	}
+
+	function loadTaskArea(area, force, then) {
+		taskLoads[area] = "loading";
+		if (homeTab() === "tasks") renderTasks();
+		fetchTaskSet(area, force, function () {
+			delete taskLoads[area];
+			if (then) then(true);
+			else renderHome();
+		}, function (msg) {
+			taskLoads[area] = msg;
+			if (then) then(false);
+			else renderHome();
+		});
+	}
+
+	// Areas not loaded yet, one after another (each page is 200 KB+).
+	function loadAllTaskAreas() {
+		var missing = TASK_AREAS.filter(function (a) { return !cachedTaskSet(a.name); });
+		(function next(i) {
+			if (i >= missing.length) { renderHome(); return; }
+			loadTaskArea(missing[i].name, false, function () {
+				if (homeTab() === "tasks") renderTasks();
+				next(i + 1);
+			});
+		})(0);
+	}
+
+	function renderTasks() {
+		var filter = document.getElementById("search").value.trim().toLowerCase();
+		var main = document.getElementById("task-list");
+		if (!main) return;
+		var prevScroll = main.scrollTop;
+		main.innerHTML = "";
+		var shown = 0, hidden = 0, missing = 0;
+
+		TASK_AREAS.forEach(function (area) {
+			var set = cachedTaskSet(area.name);
+			if (!set) missing++;
+			var tiers = set ? set.tiers : area.tiers.map(function (name) { return { name: name, tasks: null }; });
+			var areaHit = !filter || area.name.toLowerCase().indexOf(filter) !== -1;
+			var matches = [];
+			if (filter && set) {
+				set.tiers.forEach(function (t) {
+					t.tasks.forEach(function (k) {
+						if ((k.name + " " + k.description).toLowerCase().indexOf(filter) !== -1) matches.push({ tier: t.name, task: k });
+					});
+				});
+			}
+			if (!areaHit && !matches.length) return;
+
+			var counts = {}, areaDone = 0, areaTotal = 0, tiersDone = 0;
+			tiers.forEach(function (t) {
+				if (!t.tasks) return;
+				var c = counts[t.name] = tierCounts(t, progress, area.name);
+				areaDone += c.done;
+				areaTotal += c.total;
+				if (c.total && c.done === c.total) tiersDone++;
+			});
+			if (prefs.hideDone && set && tiersDone === tiers.length && !matches.length) { hidden++; return; }
+			shown++;
+
+			var card = el("div", "task-area");
+			var head = el("div", "task-area-head");
+			head.appendChild(el("span", "task-area-name", area.name));
+			if (set) head.appendChild(el("span", "quest-progress", areaDone + " / " + areaTotal));
+			var state = taskLoads[area.name];
+			var action = el("button", "task-area-action", state === "loading" ? "Loading…" : set ? "↻" : "Load");
+			action.title = set ? "Reload this area's tasks from the wiki" : "Load this area's tasks from the wiki";
+			action.disabled = state === "loading";
+			action.addEventListener("click", function (e) {
+				e.stopPropagation();
+				loadTaskArea(area.name, true);
+			});
+			head.appendChild(action);
+			card.appendChild(head);
+
+			var row = el("div", "task-tiers");
+			tiers.forEach(function (t) {
+				var c = counts[t.name];
+				var complete = c && c.total && c.done === c.total;
+				if (prefs.hideDone && complete && !filter) return;
+				var b = el("button", "task-tier" + (complete ? " done" : c && c.done ? " started" : ""));
+				b.appendChild(el("span", "task-tier-name", t.name));
+				b.appendChild(el("span", "task-tier-count", c ? c.done + "/" + c.total : "–"));
+				b.title = c ? t.name + " " + area.name + ": " + c.done + " of " + c.total + " tasks done" : "Open " + t.name + " " + area.name + " tasks";
+				b.addEventListener("click", function () { openQuest(taskTitle(area.name, t.name)); });
+				row.appendChild(b);
+			});
+			card.appendChild(row);
+
+			if (typeof state === "string" && state !== "loading") card.appendChild(el("div", "task-area-error", state));
+			matches.slice(0, TASK_MATCHES_MAX).forEach(function (m) {
+				var p = progress[taskTitle(area.name, m.tier)];
+				var done = !!(p && p.done && p.done["a" + m.task.id]);
+				var mrow = el("div", "task-match" + (done ? " done" : ""));
+				mrow.appendChild(el("span", "task-match-tier", m.tier));
+				mrow.appendChild(el("span", "task-match-name", m.task.name));
+				mrow.title = m.task.description;
+				mrow.addEventListener("click", function () { openQuest(taskTitle(area.name, m.tier)); });
+				card.appendChild(mrow);
+			});
+			if (matches.length > TASK_MATCHES_MAX) {
+				card.appendChild(el("div", "task-match-more", "and " + (matches.length - TASK_MATCHES_MAX) + " more"));
+			}
+			main.appendChild(card);
+		});
+
+		if (missing) {
+			var tools = el("div", "task-tools");
+			tools.appendChild(el("span", null, filter
+				? "Searching task names in loaded areas only."
+				: missing + " area" + (missing === 1 ? "" : "s") + " not loaded yet. Loading fetches them from the wiki."));
+			var all = el("button", null, "Load all");
+			all.title = "Fetch every area's tasks from the wiki, so counts and search cover them all";
+			all.addEventListener("click", loadAllTaskAreas);
+			tools.appendChild(all);
+			main.insertBefore(tools, main.firstChild);
+		}
+		if (!shown) {
+			main.appendChild(el("div", "status", filter ? "No areas or loaded tasks match \"" + filter + "\"." :
+				hidden ? "Every loaded area is done. Untick \"Hide done\" to see them." : "No areas to show."));
+		}
+		main.scrollTop = prevScroll;
+		updateTaskTabLabel();
+	}
+
 	function renderMeta() {
 		var info = document.getElementById("quest-info");
 		info.innerHTML = "";
-		var link = el("a", null, "Open wiki guide");
-		link.href = "https://runescape.wiki/w/" + encodeURIComponent(guide.title.replace(/ /g, "_"));
+		var link = el("a", null, guide.tasks ? "Open on the wiki" : "Open wiki guide");
+		link.href = guide.tasks
+			? "https://runescape.wiki/w/" + encodeURIComponent(taskAreaPage(guide.tasks.area).replace(/ /g, "_")) +
+				"#" + guide.tasks.tier + "_achievements"
+			: "https://runescape.wiki/w/" + encodeURIComponent(guide.title.replace(/ /g, "_"));
 		link.target = "_blank";
 		info.appendChild(link);
 
-		var allNeeded = [];
+		var allNeeded = guide.tasks ? guide.tasks.items.slice() : [];
 		guide.sections.forEach(function (s) {
 			s.needed.forEach(function (n) { allNeeded.push(n); });
 		});
@@ -3345,6 +4084,9 @@
 
 		var scanCount = renderScanList();
 		document.getElementById("scan-status").textContent = "";
+		// The scanner needs exact item names, which only quest guides give.
+		var scanBtn = document.getElementById("btn-scan");
+		if (scanBtn && scanBtn.parentNode) scanBtn.parentNode.classList.toggle("hidden", !!guide.tasks);
 		show("items-panel", allNeeded.length > 0 || scanCount > 0);
 		// Open by default on every quest so requirements are not missed;
 		// the user can still collapse it.
@@ -3456,6 +4198,7 @@
 		main.innerHTML = "";
 		var cur = currentStep();
 		var doneCount = 0;
+		var hiddenDone = 0; // finished tasks left out with "Hide done" (area tasks only)
 
 		guide.sections.forEach(function (section, si) {
 			main.appendChild(el("div", "section-title", section.title));
@@ -3470,6 +4213,7 @@
 				var step = flatSteps.find(function (s) { return s.sectionIndex === si && s.stepIndex === ti; });
 				var done = isDone(step);
 				if (done) doneCount++;
+				if (stepData.task && done && prefs.hideDone) { hiddenDone++; return; }
 
 				var row = el("div", "step" + (done ? " done" : "") + (step === cur ? " current" : ""));
 				var box = document.createElement("input");
@@ -3479,6 +4223,17 @@
 				row.appendChild(box);
 
 				var body = el("div", "step-text");
+				if (stepData.task) {
+					appendTaskBody(body, stepData.task);
+					row.appendChild(body);
+					row.addEventListener("click", function () {
+						var wasDone = isDone(step);
+						setDone(step, !wasDone);
+						if (!wasDone) maybeFinishQuest();
+					});
+					main.appendChild(row);
+					return;
+				}
 				appendLinkedText(body, stepData.text, stepData.links);
 				if (stepData.chat) body.appendChild(el("span", "chip", "Chat: " + stepData.chat));
 				(stepData.maps || []).forEach(function (m) { body.appendChild(mapChip(m)); });
@@ -3517,8 +4272,14 @@
 			});
 		});
 
+		if (hiddenDone) {
+			main.insertBefore(el("div", "status", hiddenDone + " finished task" + (hiddenDone === 1 ? "" : "s") +
+				" hidden. Untick \"Hide done\" on the home screen to show them."), main.firstChild);
+		}
 		if (!cur && flatSteps.length) {
-			main.appendChild(el("div", "complete-banner", "Quest complete! " + guide.name + " is done."));
+			main.appendChild(el("div", "complete-banner", guide.tasks
+				? "Tier complete! Every " + guide.name + " task is done. Claim the rewards from the Rewards list above."
+				: "Quest complete! " + guide.name + " is done."));
 			lastScrolledKey = null;
 		} else if (cur) {
 			// Scroll only when the current step actually changed (completing a
@@ -3619,11 +4380,18 @@
 		finishingQuest = false;
 		show("view-home", false);
 		show("view-guide", true);
-		document.getElementById("guide-title").textContent = guideDisplayName(title);
+		var titleEl = document.getElementById("guide-title");
+		titleEl.textContent = guideDisplayName(title);
+		titleEl.title = guideDisplayName(title); // the full name when a narrow window cuts it short
 		document.getElementById("steps").innerHTML = "";
 		document.getElementById("quest-info").innerHTML = "";
 		show("items-panel", false);
-		setStatus("guide-status", "Loading guide from the wiki…");
+		var isTier = !!parseTaskTitle(title);
+		setQuestOnlyControls(!isTier);
+		var dTitle = document.getElementById("details-items-title"), rTitle = document.getElementById("details-rec-title");
+		if (dTitle) dTitle.textContent = "From the quest page";
+		if (rTitle) rTitle.textContent = "Recommended";
+		setStatus("guide-status", isTier ? "Loading tasks from the wiki…" : "Loading guide from the wiki…");
 
 		fetchGuide(title, function (parsed) {
 			guide = parsed;
@@ -3633,6 +4401,7 @@
 					flatSteps.push({
 						sectionIndex: si,
 						stepIndex: ti,
+						key: stepData.key,
 						text: stepData.text,
 						chat: stepData.chat,
 						subs: stepData.sub || []
@@ -3646,6 +4415,11 @@
 			show("details-rec-panel", false);
 			resetOverview();
 			applyOverviewVisibility();
+			if (guide.tasks) {
+				renderTaskDetails();
+				if (overlayTimer) paintOverlay();
+				return;
+			}
 			attachQuestDetails(renderQuestDetails);
 			if (title !== PATHWAY_TITLE) attachFullGuideImages(guide.name, title);
 			restoreQuestingModes();
@@ -3747,7 +4521,7 @@
 		hideMapPanel();
 		show("view-guide", false);
 		show("view-home", true);
-		renderList();
+		renderHome();
 		document.getElementById("search").focus();
 	}
 
@@ -3756,11 +4530,17 @@
 	function applyRmStatuses(parsed, name, how) {
 		rmStatuses = parsed.statuses;
 		rmEligible = parsed.eligible || null;
+		rmQuestPoints = typeof parsed.questPoints === "number" ? parsed.questPoints : null;
 		var done = 0;
 		Object.keys(rmStatuses).forEach(function (k) { if (rmStatuses[k] === "COMPLETED") done++; });
 		setStatus("sync-status", (how || "Synced") + ": " + done + " quests completed on " + name + ".");
 		show("rm-import", false);
 		renderList();
+		// Quest requirements on an open task tier follow the new statuses.
+		if (guide && guide.tasks) {
+			renderSteps();
+			renderTaskDetails();
+		}
 	}
 
 	function syncRuneMetrics(force) {
@@ -3774,6 +4554,7 @@
 		setStatus("sync-status", "Fetching quest statuses for " + name + "…");
 		fetchRuneMetrics(name, force, function (parsed) {
 			applyRmStatuses(parsed, name);
+			syncRmLevels(name, force);
 		}, function (msg) {
 			setStatus("sync-status", msg);
 			// Offer the always-works manual path.
@@ -3792,6 +4573,7 @@
 		setStatus("sync-status", "Syncing quest statuses for " + name + "…");
 		fetchRuneMetrics(name, false, function (parsed) {
 			applyRmStatuses(parsed, name, "Auto-synced");
+			syncRmLevels(name, false);
 		}, function () {
 			setStatus("sync-status", rmStatuses
 				? "Auto-sync failed — showing the last synced quest statuses."
@@ -3839,8 +4621,10 @@
 	function init() {
 		applyTheme();
 		applyAppTextScale();
-		document.getElementById("search").addEventListener("input", renderList);
+		document.getElementById("search").addEventListener("input", renderHome);
 		document.getElementById("btn-home").addEventListener("click", goHome);
+		document.getElementById("tab-quests").addEventListener("click", function () { setHomeTab("quests"); });
+		document.getElementById("tab-tasks").addEventListener("click", function () { setHomeTab("tasks"); });
 
 		var rsnInput = document.getElementById("rsn");
 		var hideDone = document.getElementById("hide-done");
@@ -3863,7 +4647,7 @@
 				return;
 			}
 			store(RM_CACHE_KEY, { ts: Date.now(), name: name,
-				statuses: parsed.statuses, eligible: parsed.eligible });
+				statuses: parsed.statuses, eligible: parsed.eligible, questPoints: parsed.questPoints });
 			document.getElementById("rm-json").value = "";
 			applyRmStatuses(parsed, name, "Imported");
 		});
@@ -3873,8 +4657,9 @@
 		hideDone.addEventListener("change", function () {
 			prefs.hideDone = hideDone.checked;
 			store(PREFS_KEY, prefs);
-			renderList();
+			renderHome();
 		});
+		applyHomeTab();
 		eligibleOnly.addEventListener("change", function () {
 			prefs.eligibleOnly = eligibleOnly.checked;
 			store(PREFS_KEY, prefs);
@@ -3997,12 +4782,11 @@
 		var progressCode = document.getElementById("progress-code");
 		var progressSyncStatus = document.getElementById("progress-sync-status");
 		document.getElementById("btn-progress-export").addEventListener("click", function () {
-			var questCount = Object.keys(progress).length;
 			progressCode.value = encodeProgress(progress);
 			progressCode.focus();
 			progressCode.select();
 			try { document.execCommand("copy"); } catch (e) { /* selection is enough */ }
-			progressSyncStatus.textContent = "Code for " + questCount + " quest" + (questCount === 1 ? "" : "s") +
+			progressSyncStatus.textContent = "Code for " + describeProgressKeys(Object.keys(progress)) +
 				" copied — paste it into the app on your other browser or device.";
 		});
 		document.getElementById("btn-progress-import").addEventListener("click", function () {
@@ -4014,11 +4798,11 @@
 			var changed = mergeProgress(progress, decoded);
 			store(PROGRESS_KEY, progress);
 			progressCode.value = "";
-			renderList();
+			renderHome();
 			if (guide) renderSteps();
 			if (overlayTimer) paintOverlay();
 			progressSyncStatus.textContent = changed > 0
-				? "Imported — progress merged for " + changed + " quest" + (changed === 1 ? "" : "s") + "."
+				? "Imported — progress merged for " + changed + (changed === 1 ? " quest or task tier." : " quests and task tiers.")
 				: "Imported — your progress already covered everything in that code.";
 		});
 
@@ -4232,6 +5016,26 @@
 				"alt1://addapp/" + new URL("appconfig.json", location.href).href;
 		}
 
+		// Last synced skill levels, for task requirement colours until the
+		// next sync refreshes them.
+		var lvCached = load(RM_LEVELS_KEY, null);
+		if (lvCached && lvCached.name === prefs.rsn) rmLevels = lvCached.levels;
+
+		// Deep link (?tasks=Lumbridge/Easy, or ?tasks=Lumbridge for the tab):
+		// tasks don't need the quest index, so this runs straight away.
+		var tq = /[?&]tasks=([^&]+)/.exec(location.search);
+		if (tq) {
+			var tparts = decodeURIComponent(tq[1].replace(/\+/g, " ")).split("/");
+			var tarea = null;
+			TASK_AREAS.forEach(function (a) { if (a.name.toLowerCase() === tparts[0].trim().toLowerCase()) tarea = a; });
+			setHomeTab("tasks");
+			if (tarea && tparts[1]) {
+				tarea.tiers.forEach(function (t) {
+					if (t.toLowerCase() === tparts[1].trim().toLowerCase()) openQuest(taskTitle(tarea.name, t));
+				});
+			}
+		}
+
 		setStatus("index-status", "Loading quest list from the wiki…");
 		fetchQuestIndex(function (list) {
 			questIndex = list;
@@ -4242,6 +5046,7 @@
 			if (rmCached && rmCached.name === prefs.rsn) {
 				rmStatuses = rmCached.statuses;
 				rmEligible = rmCached.eligible || null;
+				rmQuestPoints = typeof rmCached.questPoints === "number" ? rmCached.questPoints : null;
 			}
 			loadSortData();
 			renderList();
@@ -4286,7 +5091,21 @@
 		chatGotItem: chatGotItem,
 		normName: normName,
 		parseRmPayload: parseRmPayload,
-		canDoNow: canDoNow,
+		TASK_AREAS: TASK_AREAS,
+		taskTitle: taskTitle,
+		parseTaskTitle: parseTaskTitle,
+		parseTaskSet: parseTaskSet,
+		tierCounts: tierCounts,
+		tierGuide: tierGuide,
+		fetchTaskSet: fetchTaskSet,
+		stepKey: stepKey,
+		guideDisplayName: guideDisplayName,
+		reqState: reqState,
+		reqLabel: reqLabel,
+		parseRmLevels: parseRmLevels,
+		fetchRmLevels: fetchRmLevels,
+		describeProgressKeys: describeProgressKeys,
+canDoNow: canDoNow,
 		testOverlayCard: function (withSubs) {
 			var gsave = guide, fsave = flatSteps, testTitle = "__rs3qh_overlay_test__";
 			var savedProgress = progress[testTitle];
