@@ -44,6 +44,11 @@
 		}
 		function names(arr) { return arr.map(function (o) { return o.text; }).join(","); }
 
+		// A throw anywhere below used to stop the suite before it printed
+		// anything, which a headless "ALL TESTS PASSED" grep then missed
+		// (the phrase is also in this source). Report it as a failure instead.
+		try {
+
 		// Libraries loaded and expose the expected globals?
 		check("A1lib global", typeof A1lib !== "undefined" && !!A1lib.captureHoldFullRs);
 		check("digit font global", typeof Alt1Fonts !== "undefined" && !!Alt1Fonts.pixel_8px_digits);
@@ -595,6 +600,20 @@
 			atb({ subs: [{ text: "x", chat: "4 Yes." }, { text: "note" }] }, function (k) { return k === 0; }) === false);
 		check("autotick: no subs -> not blocked", atb({ text: "plain" }, noneDone) === false);
 
+		// Steps with no dialogue tick when chat says you got the item
+		// (GitHub #3: Cold War's cowbell step never moved on).
+		var cgi = window.__rs3qh.chatGotItem;
+		var cowStep = { text: "Go to the west section of the Lumbridge cow field by the gate and steal a cowbell " +
+			"from a dairy cow by using the steal-cowbell option for later on in the quest." };
+		check("got item: what the step says to get", window.__rs3qh.stepGetNames(cowStep).join("|") === "cowbell");
+		check("got item: game message ticks it", cgi(cowStep, "[19:54:59] You steal a cowbell.") === "cowbell");
+		check("got item: other wordings too", cgi(cowStep, "You manage to steal a cowbell from the dairy cow.") === "cowbell");
+		check("got item: not someone else's message", cgi(cowStep, "Larry: You'll need a cowbell.") === null);
+		check("got item: not 'you need'", cgi(cowStep, "You need a cowbell to do that.") === null);
+		check("got item: not a different item", cgi(cowStep, "You steal a bucket of milk.") === null);
+		check("got item: pick up the key", cgi({ text: "Pick up the key from the table." }, "You pick up a key.") === "key");
+		check("got item: not 'get to the top'", window.__rs3qh.stepGetNames({ text: "Get to the top of the tower." }).length === 0);
+
 		// "Every option matched" (the Any fallback) draws no boxes — words in
 		// the status line instead of a wall of green (Reddit report).
 		var aom = window.__rs3qh.allOptionsMatched;
@@ -825,6 +844,21 @@
 		check("map: section-lead map attaches to the first step",
 			mapStep.maps.length === 1 && mapStep.maps[0].x === 2743 && mapStep.maps[0].y === 3236);
 
+		// The Knight's Sword: the section opens with Thurgo's {{NPC map}}, but
+		// its first step is Squire Asrol. The map belongs on the Thurgo step,
+		// not the squire's (the chip pointed at Thurgo's hut for step 1).
+		var gNpcMap = window.__rs3qh.parseQuickGuide(
+			"==Getting started==\n{{NPC map|npcname=Thurgo|npcid=604|x=3001|y=3144|align=right|caption=Thurgo's hut}}\n" +
+			"{{Checklist|\n* Talk to [[Squire Asrol]] in Falador.\n* Talk to [[Reldo]].\n* Talk to [[Thurgo]] south of Port Sarim.\n}}\n");
+		var npcSteps = gNpcMap.sections[0].steps;
+		check("map: NPC map skips steps about other NPCs", npcSteps[0].maps.length === 0 && npcSteps[1].maps.length === 0);
+		check("map: NPC map attaches to the step about its NPC",
+			npcSteps[2].maps.length === 1 && npcSteps[2].maps[0].x === 3001 && npcSteps[2].maps[0].npc === "Thurgo");
+		var gNpcMapMissing = window.__rs3qh.parseQuickGuide(
+			"==S==\n{{NPC map|npcname=Nobody|x=3001|y=3144}}\n{{Checklist|\n* First.\n* Second.\n}}\n");
+		check("map: NPC map with no matching step falls back to the first step",
+			gNpcMapMissing.sections[0].steps[0].maps.length === 1);
+
 		// Efficient Ironman Pathway: steps come from static-row-header-step
 		// table rows (Activity | Notes | Level); other tables and the
 		// Miniguides half are skipped.
@@ -1040,6 +1074,22 @@
 		check("scale hint: silent while still warming up", hint(3, false, false) === "");
 		check("scale hint: silent when chatbox was found", hint(20, true, false) === "");
 		check("scale hint: silent when a dialogue was read", hint(20, false, true) === "");
+		check("scale hint: names HDR / colour filters", /HDR/.test(hint(8, false, false)));
+		check("scale hint: points at diagnostics", /Diagnostics/.test(hint(8, false, false)));
+
+		// Wiki HTTP failures name their cause instead of "Bad response".
+		var wsm = window.__rs3qh.wikiStatusMessage;
+		check("wiki status: 403 explains a block", /403/.test(wsm(403)) && /VPN|Cloudflare/.test(wsm(403)));
+		check("wiki status: 429 is rate limiting", /rate-limit/.test(wsm(429)));
+		check("wiki status: 5xx is the wiki's trouble", /HTTP 503/.test(wsm(503)) && /trouble/.test(wsm(503)));
+		check("wiki status: other codes still reported", /HTTP 404/.test(wsm(404)));
+
+		// Live: the diagnostics report runs outside Alt1 and reaches the wiki.
+		window.__rs3qh.runDiagnostics(function (report) {
+			var ok = /Alt1: not detected/.test(report) && /Capture: skipped/.test(report) && /Wiki: reachable/.test(report);
+			document.getElementById("results").textContent +=
+				"\nLIVE diagnostics " + (ok ? "OK" : "FAILED:\n" + report);
+		});
 
 		// Button measurement: the highlight hugs the real dark button bar
 		// found in a crop around the OCR'd row, glyph holes and a
@@ -1155,12 +1205,20 @@
 			"{{Checklist|\n* Talk to [[Aggie]] in Draynor Village.\n* Solve it. [[File:Other.png|thumb|120px|Step pic]]\n}}\n"
 		);
 		var s3 = g3.sections[0];
-		check("parser: section image captured", s3.images.length === 1 && s3.images[0].file === "Pattern triangles.png");
-		check("parser: image caption cleaned", s3.images[0].caption === "One possible solution for Aggie's puzzle");
+		// Since 2b90fb2 a section-lead image pins to the step its caption names
+		// ("Aggie's puzzle" -> "Talk to Aggie"), not the section.
+		var pinned = s3.steps[0].images || [];
+		check("parser: section-lead image pinned to the step its caption names",
+			s3.images.length === 0 && pinned.length === 1 && pinned[0].file === "Pattern triangles.png");
+		check("parser: image caption cleaned", pinned.length === 1 && pinned[0].caption === "One possible solution for Aggie's puzzle");
 		check("parser: step image captured", s3.steps[1].images.length === 1 && s3.steps[1].images[0].file === "Other.png");
 		check("parser: size param not caption", s3.steps[1].images[0].caption === "Step pic");
 		check("parser: image steps unaffected", s3.steps.length === 2 && s3.steps[0].text.indexOf("Talk to Aggie") === 0);
 
+		} catch (e) {
+			out.push("FAIL suite crashed: " + (e && e.stack ? e.stack : e));
+			failures++;
+		}
 		document.getElementById("results").textContent =
 			out.join("\n") + "\n\n" + (failures ? failures + " FAILED" : "ALL TESTS PASSED");
 	})();

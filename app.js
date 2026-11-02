@@ -125,23 +125,66 @@
 
 	// ---------- wiki api ----------
 
+	var WIKI_TIMEOUT_MS = 20000;
+	var WIKI_RETRY_MS = 1500;
+	var lastWikiError = null; // { msg, at } — shown by the diagnostics panel
+
+	// A non-2xx answer used to surface as "Bad response from the wiki",
+	// which hid the one detail that tells a block from an outage.
+	function wikiStatusMessage(status) {
+		if (status === 403) return "runescape.wiki refused the request (HTTP 403). This is usually a " +
+			"block on your network, VPN or proxy, or a Cloudflare check — opening runescape.wiki " +
+			"in a normal browser on the same connection often clears it.";
+		if (status === 429) return "runescape.wiki is rate-limiting requests (HTTP 429) — wait a minute and retry.";
+		if (status >= 500) return "runescape.wiki is having trouble right now (HTTP " + status + ") — try again shortly.";
+		return "runescape.wiki answered with HTTP " + status + ".";
+	}
+
+	// Transient failures (network blip, timeout, 429/5xx, a non-JSON
+	// challenge page) get one retry before the caller hears about it.
 	function wikiGet(params, cb, errcb) {
 		params.format = "json";
 		params.origin = "*"; // anonymous CORS
 		var qs = Object.keys(params).map(function (k) {
 			return encodeURIComponent(k) + "=" + encodeURIComponent(params[k]);
 		}).join("&");
-		var xhr = new XMLHttpRequest();
-		xhr.open("GET", WIKI_API + "?" + qs);
-		xhr.onload = function () {
-			try {
-				cb(JSON.parse(xhr.responseText));
-			} catch (e) {
-				errcb("Bad response from the wiki.");
+		(function attempt(tries) {
+			function fail(msg, transient) {
+				if (transient && tries < 1) {
+					setTimeout(function () { attempt(tries + 1); }, WIKI_RETRY_MS);
+					return;
+				}
+				lastWikiError = { msg: msg, at: Date.now() };
+				errcb(msg);
 			}
-		};
-		xhr.onerror = function () { errcb("Could not reach runescape.wiki."); };
-		xhr.send();
+			var xhr = new XMLHttpRequest();
+			xhr.open("GET", WIKI_API + "?" + qs);
+			xhr.timeout = WIKI_TIMEOUT_MS;
+			xhr.onload = function () {
+				if (xhr.status < 200 || xhr.status >= 300) {
+					fail(wikiStatusMessage(xhr.status), xhr.status === 429 || xhr.status >= 500);
+					return;
+				}
+				var data;
+				try {
+					data = JSON.parse(xhr.responseText);
+				} catch (e) {
+					fail("Bad response from the wiki (not JSON — possibly a block or captcha page).", true);
+					return;
+				}
+				try {
+					cb(data);
+				} catch (e) {
+					errcb("The wiki answered, but the app couldn't process it (" +
+						(e && e.message ? e.message : "error") + ").");
+				}
+			};
+			xhr.onerror = function () {
+				fail("Could not reach runescape.wiki — check your connection, firewall or VPN.", true);
+			};
+			xhr.ontimeout = function () { fail("runescape.wiki took too long to answer.", true); };
+			xhr.send();
+		})(0);
 	}
 
 	function fetchQuestIndex(cb, errcb) {
@@ -206,7 +249,11 @@
 			pruneGuideCache(cache);
 			store(GUIDE_CACHE_KEY, cache);
 			cb(parsed);
-		}, errcb);
+		}, function (msg) {
+			// An expired copy beats an error page while the wiki is unreachable.
+			if (hit) cb(hit.data);
+			else errcb(msg);
+		});
 	}
 
 	// ---------- runemetrics + optimal order ----------
@@ -502,7 +549,9 @@
 
 	// Map templates carry "x, y" coords plus optional plane/mapID params. The
 	// coords come either as a bare "103,93" arg or an "x:103,y:93" one.
-	function mapSentinel(parts, args) {
+	// {{NPC map}} also names its NPC (npcname=), kept so a section-lead map
+	// can find the step about that NPC.
+	function mapSentinel(parts, args, npc) {
 		var coords = null;
 		args.forEach(function (a) {
 			var c = /^(\d{1,5})\s*,\s*(\d{1,5})$/.exec(a) ||
@@ -516,7 +565,8 @@
 		if (!coords) return "";
 		var plane = namedParam(parts, "plane") || "0";
 		var mapId = namedParam(parts, "mapid") || "-1";
-		return MAP_OPEN + coords.x + "," + coords.y + "," + plane + "," + mapId + MAP_CLOSE;
+		return MAP_OPEN + coords.x + "," + coords.y + "," + plane + "," + mapId + "," +
+			encodeURIComponent(npc || "") + MAP_CLOSE;
 	}
 
 	// Replace one innermost {{template}} at a time until none remain.
@@ -596,7 +646,7 @@
 			} else if (name === "sq" || name === "!") {
 				out = "|";
 			} else if (name === "npc map" || name === "object map" || name === "map" || name === "maplink") {
-				out = mapSentinel(parts, args);
+				out = mapSentinel(parts, args, name === "npc map" ? namedParam(parts, "npcname") : null);
 			}
 			// Anything else (maps, refs, nav templates, {{QG}} ...) is dropped.
 			text = text.slice(0, m.index) + out + text.slice(m.index + m[0].length);
@@ -706,8 +756,10 @@
 			var mend = text.indexOf(MAP_CLOSE, start);
 			if (mend === -1) { text = text.replace(MAP_OPEN, ""); continue; }
 			var raw = text.slice(start + MAP_OPEN.length, mend).split(",");
-			if (raw.length === 4) {
-				maps.push({ x: +raw[0], y: +raw[1], plane: +raw[2], mapId: +raw[3] });
+			if (raw.length === 5) {
+				var map = { x: +raw[0], y: +raw[1], plane: +raw[2], mapId: +raw[3] };
+				if (raw[4]) map.npc = decodeURIComponent(raw[4]);
+				maps.push(map);
 			}
 			text = text.slice(0, start) + text.slice(mend + MAP_CLOSE.length);
 		}
@@ -838,11 +890,37 @@
 
 		// A section that never got a step keeps its buffered tip as info (so a
 		// note-only section isn't lost); otherwise the first step already took
-		// it. Called when a section ends.
+		// it. An NPC map whose NPC no step mentioned falls back to the first
+		// step. Called when a section ends.
 		function flushPending() {
 			if (pendingNote && current && !current.steps.length) current.needed.push(pendingNote);
+			if (pendingMaps.length && current && current.steps.length) {
+				current.steps[0].maps = pendingMaps.concat(current.steps[0].maps);
+			}
 			pendingNote = "";
 			pendingMaps = [];
+		}
+
+		// Does this step talk about `npc` (a link to it, or its name in the text)?
+		function stepMentions(step, npc) {
+			var want = npc.toLowerCase();
+			return step.links.some(function (l) { return l.page.toLowerCase() === want; }) ||
+				step.text.toLowerCase().indexOf(want) !== -1;
+		}
+
+		// Section-lead maps for a new step: unnamed maps belong to the first
+		// step (the one they're "on the right" of); an {{NPC map}} waits for
+		// the step about its NPC (Knight's Sword opens with Thurgo's hut, but
+		// its first step is Squire Asrol).
+		function takePendingMaps(step) {
+			var first = !current.steps.length;
+			var take = [], keep = [];
+			pendingMaps.forEach(function (m) {
+				if (m.npc ? stepMentions(step, m.npc) : first) take.push(m);
+				else keep.push(m);
+			});
+			pendingMaps = keep;
+			if (take.length) step.maps = take.concat(step.maps);
 		}
 
 		// Templates like {{Checklist|...}} span multiple lines, so resolve
@@ -897,7 +975,7 @@
 					// A tip / a {{Map}} that preceded this section's first step
 					// attaches here (the step the map is "on the right" of).
 					if (pendingNote) { step.note = pendingNote; pendingNote = ""; }
-					if (pendingMaps.length) { step.maps = pendingMaps.concat(step.maps); pendingMaps = []; }
+					if (pendingMaps.length) takePendingMaps(step);
 					current.steps.push(step);
 				} else {
 					lastStep().sub.push({ text: parsedLine.text, chat: parsedLine.chat, maps: parsedLine.maps, links: parsedLine.links });
@@ -1604,6 +1682,33 @@
 		return (step.subs || []).some(function (sub, k) { return sub.chat && !subDone(k); });
 	}
 
+	// What a step says to get, from its own words: "steal a cowbell from a
+	// dairy cow" -> ["cowbell"], "pick up the key" -> ["key"].
+	var GET_VERBS = /\b(?:steal|get|obtain|buy|collect|take|grab|pick up|mine|loot)\s+(?:an?\s+|the\s+|some\s+|\d+\s+)?([a-z' -]+?)(?=\s+(?:from|in|at|to|for|by|with|off|on|near|via|and|then|using|until|so)\b|[.,;:(]|$)/gi;
+	function stepGetNames(step) {
+		var names = [], m, text = String(step && step.text || "").replace(/\([^)]*\)/g, " ");
+		GET_VERBS.lastIndex = 0;
+		while ((m = GET_VERBS.exec(text))) {
+			var name = m[1].trim().toLowerCase().replace(/s$/, "");
+			if (name.length >= 3 && name.split(" ").length <= 4 && !/^(?:to|back|there|caught|rid|it|them|up)\b/.test(name)) names.push(name);
+		}
+		return names;
+	}
+
+	// Did this chat line say you got something the step asks for? "You steal
+	// a cowbell." on Cold War's cowbell step -> "cowbell". Only lines in the
+	// player's own voice, and not "You need a cowbell". Returns the item or null.
+	function chatGotItem(step, line) {
+		var text = String(line || "").replace(/^\s*\[[^\]]*\]\s*/, "").toLowerCase();
+		if (!/^you\b/.test(text) || /\b(?:need|can't|cannot|don't|do not|fail|already|must|should)\b/.test(text)) return null;
+		var names = stepGetNames(step);
+		for (var i = 0; i < names.length; i++) {
+			var word = names[i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+			if (new RegExp("\\b" + word + "(?:e?s)?\\b").test(text)) return names[i];
+		}
+		return null;
+	}
+
 	// Extract the named person from the guide's instruction. This is only a
 	// safety gate for dialogue matching and Auto mode: a readable, conflicting
 	// dialogue title must not be accepted as this step's conversation.
@@ -1971,13 +2076,17 @@
 	// instead of failing silently — but don't overclaim: on standard setups
 	// the usual culprit is a fully transparent chat window, and dialogue
 	// highlighting can still work even when the chatbox is unreadable
-	// (Reddit report: 1080p, 100% scale, warning blamed the scale).
+	// (Reddit report: 1080p, 100% scale, warning blamed the scale). Anything
+	// that recolours the game also breaks the match — HDR and GPU colour
+	// filters included (a 100%-scale setup whose dialogue box was on screen
+	// but never found).
 	function scaleHintText(chatMisses, anyChatFound, anyDialogFound) {
 		if (anyChatFound || anyDialogFound || chatMisses < 8) return "";
-		return " ⚠ Alt1 hasn't recognised your chatbox yet. Common causes: a fully " +
-			"transparent chat window (give it an opaque background), or interface " +
-			"scale not at 100% (graphics settings). Dialogue highlighting may still " +
-			"work when a conversation opens — the guide and overlay always work.";
+		return " ⚠ Alt1 hasn't recognised your chatbox yet. Alt1 matches the interface " +
+			"pixel-for-pixel, so check: chat window not fully transparent, interface " +
+			"scale exactly 100%, and no Windows HDR / NVIDIA or AMD colour filters on " +
+			"the game. Settings → Diagnostics can test this. The guide and overlay " +
+			"always work.";
 	}
 
 	var chatScanMisses = 0;
@@ -2165,9 +2274,19 @@
 				}
 				if (chatFound) {
 					var lines = chatReader.read(img) || [];
+					// A step with no dialogue ("steal a cowbell", GitHub #3) is
+					// done when the game says you got what it asks for.
+					var getStep = autoAdvance ? currentStep() : null;
+					if (getStep && getStep.chat) getStep = null;
 					for (var i = 0; i < lines.length; i++) {
 						if (/congratulations.*(complete|finish)|quest complete/i.test(lines[i].text)) {
 							markQuestComplete();
+						}
+						var got = getStep && chatGotItem(getStep, lines[i].text);
+						if (got) {
+							setDone(getStep, true);
+							setAssistStatus("Assist: chat says you got the " + got + " — step ticked automatically.");
+							getStep = null;
 						}
 					}
 				}
@@ -2331,6 +2450,126 @@
 			btn.textContent = "Assist: off";
 			btn.classList.remove("active");
 		}
+	}
+
+	// ---------- diagnostics ----------
+	// One copyable report for bug reports: can THIS browser reach the wiki,
+	// what Alt1 grants, and do Alt1's pixel readers recognise the chatbox
+	// and a dialogue right now. Plus a lossless capture of what Alt1 sees —
+	// screenshots pasted into chat get recompressed, which hides exactly the
+	// pixel differences that make the readers fail.
+
+	function yesNo(v) {
+		return v === undefined ? "?" : (v ? "yes" : "no");
+	}
+
+	function diagAlt1Lines() {
+		if (!inAlt1()) return ["Alt1: not detected (running in a normal browser)"];
+		var lines = [
+			"Alt1 version: " + (alt1.version || "?"),
+			"Permissions: pixel " + yesNo(alt1.permissionPixel) + ", overlay " + yesNo(alt1.permissionOverlay) +
+				", gamestate " + yesNo(alt1.permissionGameState),
+			"Game linked: " + yesNo(alt1.rsLinked) +
+				(alt1.rsLinked ? " (" + alt1.rsWidth + "x" + alt1.rsHeight + ")" : "")
+		];
+		if (alt1.rsScaling !== undefined) lines.push("Windows scaling seen by Alt1: " + alt1.rsScaling);
+		if (alt1.captureMethod !== undefined) lines.push("Capture method: " + alt1.captureMethod);
+		if (alt1.skinName !== undefined) lines.push("Interface skin: " + alt1.skinName);
+		return lines;
+	}
+
+	function captureGame() {
+		if (!inAlt1()) throw new Error("not running in Alt1");
+		if (!alt1.permissionPixel) throw new Error("the app has no pixel permission in Alt1");
+		if (alt1.rsLinked === false) throw new Error("Alt1 is not linked to the game window");
+		var img = A1lib.captureHoldFullRs();
+		if (!img) throw new Error("Alt1 returned no image");
+		return img;
+	}
+
+	// Fresh reader instances, so a check never disturbs a running Assist.
+	function diagReaderLines() {
+		var img;
+		try {
+			img = captureGame();
+		} catch (e) {
+			return ["Capture: skipped (" + e.message + ")"];
+		}
+		var lines = ["Capture: " + img.width + "x" + img.height];
+		try {
+			var pos = new Dialog.default().find(img);
+			lines.push("Dialogue box: " + (pos
+				? "found at " + pos.x + "," + pos.y + (pos.legacy ? " (legacy)" : "")
+				: "not found (fine if no conversation is open; otherwise the readers can't match your interface)"));
+		} catch (e) {
+			lines.push("Dialogue box: check failed (" + e.message + ")");
+		}
+		try {
+			var boxes = typeof Chatbox !== "undefined" ? new Chatbox.default().find(img) : null;
+			lines.push("Chatbox: " + (boxes && boxes.length ? boxes.length + " found" : "not found"));
+		} catch (e) {
+			lines.push("Chatbox: check failed (" + e.message + ")");
+		}
+		return lines;
+	}
+
+	function runDiagnostics(done) {
+		var lines = [
+			"RS3 Quest Helper diagnostics — " + new Date().toISOString(),
+			"App: " + location.origin + location.pathname,
+			"Browser: " + navigator.userAgent,
+			"Online: " + yesNo(navigator.onLine)
+		].concat(diagAlt1Lines(), diagReaderLines());
+		var index = load(INDEX_CACHE_KEY, null);
+		lines.push("Cached quest list: " + (index && index.list
+			? index.list.length + " quests, " + Math.round((Date.now() - index.ts) / 3600000) + "h old"
+			: "none"));
+		if (lastWikiError) {
+			lines.push("Last wiki error: " + lastWikiError.msg + " (" +
+				Math.round((Date.now() - lastWikiError.at) / 1000) + "s ago)");
+		}
+		var started = Date.now();
+		wikiGet({ action: "query", meta: "siteinfo" }, function (data) {
+			lines.push("Wiki: " + (data && data.query ? "reachable" : "answered oddly") +
+				" (" + (Date.now() - started) + "ms)");
+			done(lines.join("\n"));
+		}, function (msg) {
+			lines.push("Wiki: FAILED — " + msg);
+			done(lines.join("\n"));
+		});
+	}
+
+	function saveCapture(status) {
+		var img;
+		try {
+			img = captureGame();
+		} catch (e) {
+			status("Can't capture: " + e.message + ".");
+			return;
+		}
+		var canvas = img.toData().toImage();
+		canvas.toBlob(function (blob) {
+			if (!blob) { status("Capture failed: the image could not be encoded."); return; }
+			var name = "rs3qh-capture-" + new Date().toISOString().replace(/[:.]/g, "-") + ".png";
+			var url = URL.createObjectURL(blob);
+			var a = document.createElement("a");
+			a.href = url;
+			a.download = name;
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+			var msg = "Saved " + name + " (" + img.width + "x" + img.height + ") to your downloads folder.";
+			// Alt1's browser may not offer a download; the clipboard is a
+			// second route out (paste into an image editor and save as PNG).
+			if (navigator.clipboard && typeof ClipboardItem !== "undefined") {
+				navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).then(function () {
+					status(msg + " Also copied to the clipboard.");
+				}, function () { status(msg); });
+			} else {
+				status(msg);
+			}
+		}, "image/png");
 	}
 
 	// ---------- item info popup (what is it, how to make, where to buy) ----------
@@ -3737,6 +3976,24 @@
 			location.reload();
 		});
 
+		var diagReport = document.getElementById("diag-report");
+		var diagStatus = document.getElementById("diag-status");
+		document.getElementById("btn-diag-run").addEventListener("click", function () {
+			diagStatus.textContent = "Checking…";
+			runDiagnostics(function (report) {
+				diagReport.value = report;
+				diagReport.classList.remove("hidden");
+				diagReport.focus();
+				diagReport.select();
+				try { document.execCommand("copy"); } catch (e) { /* selection is enough */ }
+				diagStatus.textContent = "Report copied — paste it into your bug report. For Assist problems, " +
+					"run it again with a conversation open in game.";
+			});
+		});
+		document.getElementById("btn-diag-capture").addEventListener("click", function () {
+			saveCapture(function (msg) { diagStatus.textContent = msg; });
+		});
+
 		var progressCode = document.getElementById("progress-code");
 		var progressSyncStatus = document.getElementById("progress-sync-status");
 		document.getElementById("btn-progress-export").addEventListener("click", function () {
@@ -4025,6 +4282,8 @@
 		npcNamesForText: npcNamesForText,
 		dialogTitleConflicts: dialogTitleConflicts,
 		autoTickBlockedBySubs: autoTickBlockedBySubs,
+		stepGetNames: stepGetNames,
+		chatGotItem: chatGotItem,
 		normName: normName,
 		parseRmPayload: parseRmPayload,
 		canDoNow: canDoNow,
@@ -4097,6 +4356,8 @@
 		allOptionsMatched: allOptionsMatched,
 		measureOptionButton: measureOptionButton,
 		scaleHintText: scaleHintText,
+		wikiStatusMessage: wikiStatusMessage,
+		runDiagnostics: runDiagnostics,
 		subCascadeAllowed: subCascadeAllowed,
 		// Stateful dialogue-screen helpers for regression tests.
 		optionScreenState: function (key, opts, optionKey) {

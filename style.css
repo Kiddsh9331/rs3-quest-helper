@@ -599,6 +599,10 @@ main {
 
 .settings-code:focus { outline: none; border-color: var(--gold); }
 
+.settings-buttons { display: flex; gap: 6px; }
+
+#diag-report { word-break: normal; white-space: pre; }
+
 .chip-map {
 	background: var(--map-chip-bg);
 	color: var(--green);

@@ -170,6 +170,16 @@
 				<button id="btn-progress-import">Import</button>
 			</div>
 			<div id="progress-sync-status" class="settings-note">Export copies a code for all your quest progress. On another browser or device, paste it here and Import &mdash; it adds the ticked steps, it never un-ticks anything.</div>
+
+			<div class="settings-row">
+				<label title="Test the wiki connection and what Alt1 can see of the game">Diagnostics</label>
+				<span class="settings-buttons">
+					<button id="btn-diag-run" title="Check the wiki connection, Alt1 permissions and whether the chatbox and dialogue boxes are recognised">Run check</button>
+					<button id="btn-diag-capture" title="Save exactly what Alt1 sees of the game as a lossless PNG, for bug reports">Save capture</button>
+				</span>
+			</div>
+			<textarea id="diag-report" class="settings-code hidden" rows="9" readonly spellcheck="false"></textarea>
+			<div id="diag-status" class="settings-note">If the quest list won&rsquo;t load or Assist can&rsquo;t see your chat or dialogue, run the check and include the report (and a saved capture, with a conversation open) when you report it.</div>
 		</div>
 	</div>
 
